@@ -9,6 +9,15 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
+    <!-- Snapshot of the outgoing page, slid away when page turns are animated. -->
+    <ImageView
+        android:id="@+id/turn_snapshot"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:importantForAccessibility="no"
+        android:scaleType="fitXY"
+        android:visibility="gone" />
+
     <!-- Reading chrome (bars, contents, settings) drawn in Compose over the page. -->
     <androidx.compose.ui.platform.ComposeView
         android:id="@+id/overlay"

@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.view.View
+import android.widget.ImageView
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.animation.AnimatedVisibility
@@ -66,9 +67,7 @@ import org.json.JSONObject
 import org.readium.r2.navigator.epub.EpubNavigatorFactory
 import org.readium.r2.navigator.epub.EpubNavigatorFragment
 import org.readium.r2.navigator.input.InputListener
-import org.readium.r2.navigator.input.KeyEvent
 import org.readium.r2.navigator.input.TapEvent
-import org.readium.r2.navigator.util.DirectionalNavigationAdapter
 import org.readium.r2.shared.publication.Link
 import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.publication.Publication
@@ -81,8 +80,8 @@ class EpubReaderActivity : AppCompatActivity() {
 
     private val chromeVisible = mutableStateOf(false)
 
-    /** Turns pages on edge taps and keys; rebuilt when the animation setting changes. */
-    private var pageTurner: DirectionalNavigationAdapter? = null
+    /** Turns pages on edge taps and keys, sliding them when that's switched on. */
+    private lateinit var pageTurner: PageTurner
     private val locator = MutableStateFlow<Locator?>(null)
 
     private val navigator: EpubNavigatorFragment
@@ -127,14 +126,13 @@ class EpubReaderActivity : AppCompatActivity() {
         }
 
         // Edge taps turn pages; a tap anywhere else shows or hides the reading chrome.
+        pageTurner = PageTurner(window, navigator, container, findViewById<ImageView>(R.id.turn_snapshot), lifecycleScope)
+        navigator.addInputListener(pageTurner)
         navigator.addInputListener(object : InputListener {
             override fun onTap(event: TapEvent): Boolean {
-                if (pageTurner?.onTap(event) == true) return true
                 chromeVisible.value = !chromeVisible.value
                 return true
             }
-
-            override fun onKey(event: KeyEvent): Boolean = pageTurner?.onKey(event) == true
         })
 
         lifecycleScope.launch {
@@ -155,10 +153,7 @@ class EpubReaderActivity : AppCompatActivity() {
                 navigator.submitPreferences(s.toEpubPreferences())
                 applyPageTheme(s.theme)
                 window.setSystemBarsHidden(s.hideSystemBars)
-                if (pageTurner == null || animatedTurns != s.animatePageTurns) {
-                    animatedTurns = s.animatePageTurns
-                    pageTurner = DirectionalNavigationAdapter(navigator, animatedTransition = s.animatePageTurns)
-                }
+                pageTurner.animated = s.animatePageTurns
             }
         }
 
@@ -166,8 +161,6 @@ class EpubReaderActivity : AppCompatActivity() {
             AppTheme { Chrome() }
         }
     }
-
-    private var animatedTurns = false
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
