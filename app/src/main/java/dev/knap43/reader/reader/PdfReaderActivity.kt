@@ -30,6 +30,8 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -43,6 +45,8 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.FormatListNumbered
+import androidx.compose.material.icons.rounded.Fullscreen
+import androidx.compose.material.icons.rounded.FullscreenExit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -151,6 +155,12 @@ class PdfReaderActivity : ComponentActivity() {
         }
     }
 
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        // Dialogs can bring the bars back; hide them again on return.
+        if (hasFocus) window.setSystemBarsHidden(readerApp.prefs.settings.value.hideSystemBars)
+    }
+
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
     private fun PdfReader(doc: PdfDocument, title: String, bookId: String, startPage: Int) {
@@ -174,6 +184,7 @@ class PdfReaderActivity : ComponentActivity() {
         }
 
         val night = settings.pdfNight
+        LaunchedEffect(settings.hideSystemBars) { window.setSystemBarsHidden(settings.hideSystemBars) }
         val pageFilter = remember(night) { if (night) ColorFilter.colorMatrix(NightMatrix) else null }
         val gutter = if (night) Color(0xFF0B0907) else MaterialTheme.colorScheme.surfaceContainerLowest
 
@@ -213,7 +224,7 @@ class PdfReaderActivity : ComponentActivity() {
         ) {
             LazyColumn(
                 state = listState,
-                contentPadding = WindowInsets.systemBars.asPaddingValues().let {
+                contentPadding = WindowInsets.systemBars.union(WindowInsets.displayCutout).asPaddingValues().let {
                     PaddingValues(top = it.calculateTopPadding() + 8.dp, bottom = it.calculateBottomPadding() + 8.dp)
                 },
                 verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -243,6 +254,12 @@ class PdfReaderActivity : ComponentActivity() {
                     title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     actions = {
                         IconButton(onClick = { askPage = true }) { Icon(Icons.Rounded.FormatListNumbered, "Go to page") }
+                        IconButton(onClick = { app.prefs.update { it.copy(hideSystemBars = !it.hideSystemBars) } }) {
+                            Icon(
+                                if (settings.hideSystemBars) Icons.Rounded.FullscreenExit else Icons.Rounded.Fullscreen,
+                                if (settings.hideSystemBars) "Show system bars" else "Hide system bars",
+                            )
+                        }
                         IconButton(onClick = { app.prefs.update { it.copy(pdfNight = !it.pdfNight) } }) {
                             Icon(
                                 if (night) Icons.Rounded.LightMode else Icons.Rounded.DarkMode,

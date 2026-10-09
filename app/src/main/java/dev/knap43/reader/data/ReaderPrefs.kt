@@ -35,6 +35,10 @@ data class ReadingSettings(
     val font: FontChoice = FontChoice.ORIGINAL,
     val spacing: Spacing = Spacing.ORIGINAL,
     val pdfNight: Boolean = true,
+    /** Hide the status and navigation bars while reading. */
+    val hideSystemBars: Boolean = false,
+    /** Slide EPUB pages when turning them with taps or keys. */
+    val animatePageTurns: Boolean = false,
 ) {
     fun toEpubPreferences(): EpubPreferences {
         val custom = font != FontChoice.ORIGINAL || spacing != Spacing.ORIGINAL
@@ -66,6 +70,8 @@ class ReaderPrefs(context: Context) {
             .putString("font", next.font.name)
             .putString("spacing", next.spacing.name)
             .putBoolean("pdfNight", next.pdfNight)
+            .putBoolean("hideSystemBars", next.hideSystemBars)
+            .putBoolean("animatePageTurns", next.animatePageTurns)
             .apply()
     }
 
@@ -75,6 +81,8 @@ class ReaderPrefs(context: Context) {
         font = enumOr(sp.getString("font", null), FontChoice.ORIGINAL),
         spacing = enumOr(sp.getString("spacing", null), Spacing.ORIGINAL),
         pdfNight = sp.getBoolean("pdfNight", true),
+        hideSystemBars = sp.getBoolean("hideSystemBars", false),
+        animatePageTurns = sp.getBoolean("animatePageTurns", false),
     )
 
     private inline fun <reified E : Enum<E>> enumOr(name: String?, default: E): E =

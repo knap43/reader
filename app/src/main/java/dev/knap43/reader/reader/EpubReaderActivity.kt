@@ -66,6 +66,7 @@ import org.json.JSONObject
 import org.readium.r2.navigator.epub.EpubNavigatorFactory
 import org.readium.r2.navigator.epub.EpubNavigatorFragment
 import org.readium.r2.navigator.input.InputListener
+import org.readium.r2.navigator.input.KeyEvent
 import org.readium.r2.navigator.input.TapEvent
 import org.readium.r2.navigator.util.DirectionalNavigationAdapter
 import org.readium.r2.shared.publication.Link
@@ -79,6 +80,9 @@ class EpubReaderActivity : AppCompatActivity() {
     private lateinit var publication: Publication
 
     private val chromeVisible = mutableStateOf(false)
+
+    /** Turns pages on edge taps and keys; rebuilt when the animation setting changes. */
+    private var pageTurner: DirectionalNavigationAdapter? = null
     private val locator = MutableStateFlow<Locator?>(null)
 
     private val navigator: EpubNavigatorFragment
@@ -123,12 +127,14 @@ class EpubReaderActivity : AppCompatActivity() {
         }
 
         // Edge taps turn pages; a tap anywhere else shows or hides the reading chrome.
-        navigator.addInputListener(DirectionalNavigationAdapter(navigator))
         navigator.addInputListener(object : InputListener {
             override fun onTap(event: TapEvent): Boolean {
+                if (pageTurner?.onTap(event) == true) return true
                 chromeVisible.value = !chromeVisible.value
                 return true
             }
+
+            override fun onKey(event: KeyEvent): Boolean = pageTurner?.onKey(event) == true
         })
 
         lifecycleScope.launch {
@@ -148,12 +154,25 @@ class EpubReaderActivity : AppCompatActivity() {
             app.prefs.settings.collect { s ->
                 navigator.submitPreferences(s.toEpubPreferences())
                 applyPageTheme(s.theme)
+                window.setSystemBarsHidden(s.hideSystemBars)
+                if (pageTurner == null || animatedTurns != s.animatePageTurns) {
+                    animatedTurns = s.animatePageTurns
+                    pageTurner = DirectionalNavigationAdapter(navigator, animatedTransition = s.animatePageTurns)
+                }
             }
         }
 
         findViewById<ComposeView>(R.id.overlay).setContent {
             AppTheme { Chrome() }
         }
+    }
+
+    private var animatedTurns = false
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        // Dialogs and sheets can bring the bars back; hide them again on return.
+        if (hasFocus && ::bookId.isInitialized) window.setSystemBarsHidden(readerApp.prefs.settings.value.hideSystemBars)
     }
 
     private fun applyPageTheme(theme: PageTheme) {

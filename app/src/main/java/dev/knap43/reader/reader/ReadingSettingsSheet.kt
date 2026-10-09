@@ -27,6 +27,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -122,6 +123,19 @@ fun ReadingSettingsSheet(
                     )
                 }
             }
+
+            Section("Reading") {
+                SwitchRow(
+                    title = "Hide status and navigation bars",
+                    subtitle = "Swipe from an edge to see them",
+                    checked = settings.hideSystemBars,
+                ) { on -> onChange { it.copy(hideSystemBars = on) } }
+                SwitchRow(
+                    title = "Animate page turns",
+                    subtitle = "Pages slide when you tap an edge",
+                    checked = settings.animatePageTurns,
+                ) { on -> onChange { it.copy(animatePageTurns = on) } }
+            }
         }
     }
 }
@@ -136,6 +150,24 @@ private fun Section(title: String, content: @Composable () -> Unit) {
             modifier = Modifier.padding(bottom = 10.dp),
         )
         content()
+    }
+}
+
+@Composable
+private fun SwitchRow(title: String, subtitle: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.medium)
+            .clickable { onCheckedChange(!checked) }
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f).padding(end = 16.dp)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 

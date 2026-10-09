@@ -10,10 +10,12 @@ An EPUB and PDF reader for Android, in Kotlin and Jetpack Compose with Material 
   - Table of contents, and a progress slider that jumps anywhere in the book.
   - Page themes: Dusk, Night, Sepia, Paper.
   - Text size, typeface (original, serif, sans) and line spacing.
+  - Optional sliding page turns.
 - **PDF**, rendered with Android's `PdfRenderer`:
   - Continuous scroll.
   - Pinch to zoom; double-tap to zoom or reset.
   - Go to page, and a warm night mode that inverts pages.
+- Optional full screen: hide the status and navigation bars (in the EPUB settings sheet, or the full-screen button in the PDF reader). Swipe from an edge to see them.
 - Your position is saved as you read and restored when you reopen a book.
 
 Books are copied into the app's private storage when added, so the originals can move or disappear without breaking the library.
