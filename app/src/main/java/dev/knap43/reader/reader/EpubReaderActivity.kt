@@ -71,6 +71,7 @@ import org.readium.r2.navigator.util.DirectionalNavigationAdapter
 import org.readium.r2.shared.publication.Link
 import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.publication.Publication
+import org.readium.r2.shared.publication.services.positions
 
 class EpubReaderActivity : AppCompatActivity() {
 
@@ -172,9 +173,15 @@ class EpubReaderActivity : AppCompatActivity() {
         lifecycleScope.launch { navigator.go(link) }
     }
 
+    /** Every reading position in the book, computed once on first seek. */
+    private var positions: List<Locator>? = null
+
     private fun goToProgression(progression: Float) {
         lifecycleScope.launch {
-            publication.locateProgression(progression.toDouble())?.let { navigator.go(it) }
+            val all = positions ?: publication.positions().also { positions = it }
+            if (all.isEmpty()) return@launch
+            val index = (progression * (all.size - 1)).toInt().coerceIn(0, all.lastIndex)
+            navigator.go(all[index])
         }
     }
 
