@@ -32,6 +32,7 @@ import androidx.compose.material.icons.automirrored.rounded.MenuBook
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AutoStories
 import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -40,6 +41,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LargeTopAppBar
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
@@ -79,6 +81,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.knap43.reader.data.Book
 import dev.knap43.reader.data.Format
 import dev.knap43.reader.readerApp
+import dev.knap43.reader.ui.theme.AppearanceDialog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -99,6 +102,7 @@ fun LibraryScreen(
     val busyText by busy.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     var actionsFor by remember { mutableStateOf<Book?>(null) }
+    var appearanceOpen by remember { mutableStateOf(false) }
     var confirmRemove by remember { mutableStateOf<Book?>(null) }
 
     LaunchedEffect(Unit) { messages.collect { snackbar.showSnackbar(it) } }
@@ -121,6 +125,9 @@ fun LibraryScreen(
         topBar = {
             LargeTopAppBar(
                 title = { Text("Library", fontFamily = FontFamily.Serif) },
+                actions = {
+                    IconButton(onClick = { appearanceOpen = true }) { Icon(Icons.Rounded.Palette, "Appearance") }
+                },
                 scrollBehavior = scrollBehavior,
                 colors = TopAppBarDefaults.largeTopAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,
@@ -171,6 +178,8 @@ fun LibraryScreen(
             }
         }
     }
+
+    if (appearanceOpen) AppearanceDialog(onDismiss = { appearanceOpen = false })
 
     actionsFor?.let { book ->
         ModalBottomSheet(onDismissRequest = { actionsFor = null }) {

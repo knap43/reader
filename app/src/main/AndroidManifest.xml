@@ -13,10 +13,6 @@
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTask">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
             <!-- "Open with Reader" from file managers and downloads -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
@@ -28,6 +24,41 @@
                 <data android:mimeType="application/pdf" />
             </intent-filter>
         </activity>
+
+        <!-- Launcher entries, one per icon; the in-app Appearance setting enables exactly one. -->
+        <activity-alias
+            android:name="dev.knap43.reader.LauncherClassic"
+            android:enabled="true"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name="dev.knap43.reader.LauncherColorful"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_colorful"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name="dev.knap43.reader.LauncherSystem"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_system"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
 
         <activity
             android:name=".reader.EpubReaderActivity"

@@ -1,10 +1,16 @@
 package dev.knap43.reader.ui.theme
 
+import android.os.Build
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 
 val Amber = Color(0xFFE1A34F)
 val Ink = Color(0xFF12100E)
@@ -48,7 +54,15 @@ private val DarkAmber = darkColorScheme(
     scrim = Color(0xFF000000),
 )
 
+/** The amber scheme, or the wallpaper's (always dark) when "Use system colors" is on. */
+@Composable
+private fun colorScheme(amber: ColorScheme): ColorScheme {
+    val context = LocalContext.current
+    val systemColors by Appearance.systemColors(context).collectAsState()
+    return if (systemColors && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) dynamicDarkColorScheme(context) else amber
+}
+
 @Composable
 fun AppTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = DarkAmber, typography = Typography(), content = content)
+    MaterialTheme(colorScheme = colorScheme(DarkAmber), typography = Typography(), content = content)
 }
