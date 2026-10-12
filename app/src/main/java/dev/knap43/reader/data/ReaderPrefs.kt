@@ -1,6 +1,7 @@
 package dev.knap43.reader.data
 
 import android.content.Context
+import android.content.pm.ActivityInfo
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,6 +28,15 @@ enum class Spacing(val label: String, val lineHeight: Double?) {
     COMPACT("Compact", 1.3),
     COMFORT("Comfort", 1.55),
     AIRY("Airy", 1.85),
+}
+
+/** Screen orientation for a PDF, remembered per document. */
+enum class PdfOrientation(val label: String, val activityValue: Int) {
+    AUTO("Auto-rotate", ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED),
+    PORTRAIT("Portrait", ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT),
+    LANDSCAPE("Landscape", ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+
+    fun next(): PdfOrientation = entries[(ordinal + 1) % entries.size]
 }
 
 data class ReadingSettings(
@@ -65,6 +75,21 @@ class ReaderPrefs(context: Context) {
     var resumeBookId: String?
         get() = sp.getString("resumeBook", null)
         set(value) = sp.edit().putString("resumeBook", value).apply()
+
+    fun pdfOrientation(bookId: String): PdfOrientation =
+        enumOr(sp.getString("pdfOrientation:$bookId", null), PdfOrientation.AUTO)
+
+    fun setPdfOrientation(bookId: String, orientation: PdfOrientation) {
+        sp.edit().apply {
+            if (orientation == PdfOrientation.AUTO) remove("pdfOrientation:$bookId")
+            else putString("pdfOrientation:$bookId", orientation.name)
+        }.apply()
+    }
+
+    /** Drops per-document settings for a book removed from the library. */
+    fun forgetBook(bookId: String) {
+        sp.edit().remove("pdfOrientation:$bookId").apply()
+    }
 
     fun update(change: (ReadingSettings) -> ReadingSettings) {
         val next = change(_settings.value)

@@ -44,6 +44,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.LightMode
+import androidx.compose.material.icons.rounded.ScreenRotation
+import androidx.compose.material.icons.rounded.StayCurrentLandscape
+import androidx.compose.material.icons.rounded.StayCurrentPortrait
 import androidx.compose.material.icons.rounded.FormatListNumbered
 import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.FullscreenExit
@@ -67,6 +70,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -87,6 +91,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
+import dev.knap43.reader.data.PdfOrientation
 import dev.knap43.reader.readerApp
 import dev.knap43.reader.ui.theme.AppTheme
 import kotlinx.coroutines.CoroutineScope
@@ -123,6 +128,7 @@ class PdfViewModel(app: Application) : AndroidViewModel(app) {
 class PdfReaderActivity : ComponentActivity() {
 
     private val vm: PdfViewModel by viewModels()
+    private var orientation by mutableStateOf(PdfOrientation.AUTO)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge(
@@ -136,6 +142,8 @@ class PdfReaderActivity : ComponentActivity() {
             finish()
             return
         }
+        orientation = readerApp.prefs.pdfOrientation(id)
+        requestedOrientation = orientation.activityValue
         vm.load(book.file, id)
         val startPage = book.position?.toIntOrNull() ?: 0
 
@@ -173,7 +181,8 @@ class PdfReaderActivity : ComponentActivity() {
         val settings by app.prefs.settings.collectAsStateWithLifecycle()
         val listState = rememberLazyListState(initialFirstVisibleItemIndex = startPage.coerceIn(0, doc.pageCount - 1))
         val scope = rememberCoroutineScope()
-        var chrome by remember { mutableStateOf(false) }
+        // Saveable so the bars stay open when switching orientation recreates the activity.
+        var chrome by rememberSaveable { mutableStateOf(false) }
         var askPage by remember { mutableStateOf(false) }
         var scale by remember { mutableFloatStateOf(1f) }
         var offsetX by remember { mutableFloatStateOf(0f) }
@@ -259,6 +268,21 @@ class PdfReaderActivity : ComponentActivity() {
                     title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     actions = {
                         IconButton(onClick = { askPage = true }) { Icon(Icons.Rounded.FormatListNumbered, "Go to page") }
+                        IconButton(onClick = {
+                            val next = orientation.next()
+                            app.prefs.setPdfOrientation(bookId, next)
+                            orientation = next
+                            requestedOrientation = next.activityValue
+                        }) {
+                            Icon(
+                                when (orientation) {
+                                    PdfOrientation.AUTO -> Icons.Rounded.ScreenRotation
+                                    PdfOrientation.PORTRAIT -> Icons.Rounded.StayCurrentPortrait
+                                    PdfOrientation.LANDSCAPE -> Icons.Rounded.StayCurrentLandscape
+                                },
+                                "Orientation: ${orientation.label}",
+                            )
+                        }
                         IconButton(onClick = { app.prefs.update { it.copy(hideSystemBars = !it.hideSystemBars) } }) {
                             Icon(
                                 if (settings.hideSystemBars) Icons.Rounded.FullscreenExit else Icons.Rounded.Fullscreen,
