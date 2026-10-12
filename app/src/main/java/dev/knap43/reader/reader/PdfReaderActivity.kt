@@ -273,7 +273,7 @@ class PdfReaderActivity : ComponentActivity() {
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.97f),
+                        containerColor = MaterialTheme.colorScheme.surfaceContainer,
                     ),
                 )
             }
@@ -284,7 +284,7 @@ class PdfReaderActivity : ComponentActivity() {
                 exit = slideOutVertically { it } + fadeOut(),
                 modifier = Modifier.align(Alignment.BottomCenter),
             ) {
-                Surface(color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.97f)) {
+                Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
                     val page = listState.firstVisibleItemIndex
                     ProgressPanel(
                         chapter = null,

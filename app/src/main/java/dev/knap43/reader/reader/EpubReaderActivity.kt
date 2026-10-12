@@ -222,7 +222,7 @@ class EpubReaderActivity : AppCompatActivity() {
         val settings by app.prefs.settings.collectAsStateWithLifecycle()
         var showToc by remember { mutableStateOf(false) }
         var showSettings by remember { mutableStateOf(false) }
-        val barColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.97f)
+        val barColor = MaterialTheme.colorScheme.surfaceContainer
 
         Box(Modifier.fillMaxSize()) {
             AnimatedVisibility(
