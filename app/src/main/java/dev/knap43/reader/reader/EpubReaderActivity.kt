@@ -113,9 +113,17 @@ class EpubReaderActivity : AppCompatActivity() {
         setContentView(R.layout.activity_epub)
 
         val container = findViewById<FragmentContainerView>(R.id.navigator_container)
+        // Readium already pads the page for the display cutout (top and bottom), so only the part
+        // of the system bars beyond the cutout is added here; counting the cutout twice left a gap.
         ViewCompat.setOnApplyWindowInsetsListener(container) { v, insets ->
-            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
-            v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            val cutout = insets.getInsets(WindowInsetsCompat.Type.displayCutout())
+            v.setPadding(
+                maxOf(bars.left, cutout.left),
+                (bars.top - cutout.top).coerceAtLeast(0),
+                maxOf(bars.right, cutout.right),
+                (bars.bottom - cutout.bottom).coerceAtLeast(0),
+            )
             insets
         }
 
@@ -174,6 +182,12 @@ class EpubReaderActivity : AppCompatActivity() {
             isAppearanceLightStatusBars = theme.isLight
             isAppearanceLightNavigationBars = theme.isLight
         }
+    }
+
+    override fun finish() {
+        // Closed by the reader, not lost to process death: open the library next time.
+        if (::bookId.isInitialized) readerApp.prefs.resumeBookId = null
+        super.finish()
     }
 
     override fun onDestroy() {

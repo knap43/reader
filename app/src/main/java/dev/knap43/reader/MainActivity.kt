@@ -45,7 +45,12 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        if (savedInstanceState == null) handleViewIntent(intent)
+        if (savedInstanceState == null && intent?.action == Intent.ACTION_VIEW) {
+            handleViewIntent(intent)
+        } else {
+            // A cold start or a restore after process death: return to the book that was open.
+            readerApp.prefs.resumeBookId?.let { readerApp.library.get(it) }?.let(::openBook)
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -84,6 +89,7 @@ class MainActivity : ComponentActivity() {
             return
         }
         app.library.markOpened(book.id)
+        app.prefs.resumeBookId = book.id
         when (book.format) {
             Format.PDF -> startActivity(PdfReaderActivity.intent(this, book.id))
             Format.EPUB -> lifecycleScope.launch {

@@ -155,6 +155,11 @@ class PdfReaderActivity : ComponentActivity() {
         }
     }
 
+    override fun finish() {
+        readerApp.prefs.resumeBookId = null
+        super.finish()
+    }
+
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         // Dialogs can bring the bars back; hide them again on return.

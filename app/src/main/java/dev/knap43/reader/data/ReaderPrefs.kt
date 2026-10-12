@@ -61,6 +61,11 @@ class ReaderPrefs(context: Context) {
     private val _settings = MutableStateFlow(load())
     val settings: StateFlow<ReadingSettings> = _settings.asStateFlow()
 
+    /** The book left open in a reader, reopened on the next launch; cleared when the reader is closed. */
+    var resumeBookId: String?
+        get() = sp.getString("resumeBook", null)
+        set(value) = sp.edit().putString("resumeBook", value).apply()
+
     fun update(change: (ReadingSettings) -> ReadingSettings) {
         val next = change(_settings.value)
         _settings.value = next

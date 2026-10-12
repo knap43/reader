@@ -12,7 +12,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:launchMode="singleTask">
+            android:launchMode="singleTop">
             <!-- "Open with Reader" from file managers and downloads -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
