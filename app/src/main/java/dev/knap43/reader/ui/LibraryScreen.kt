@@ -71,6 +71,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.ImageBitmap
@@ -123,7 +124,8 @@ fun LibraryScreen(
     val pick = { picker.launch(arrayOf("application/epub+zip", "application/pdf")) }
 
     val sorted = remember(books) {
-        books.sortedWith(compareByDescending<Book> { maxOf(it.lastOpenedAt, it.addedAt) })
+        // Finished books sink to the end of the shelf.
+        books.sortedWith(compareBy<Book> { it.finished }.thenByDescending { maxOf(it.lastOpenedAt, it.addedAt) })
     }
     val current = if (filter == ShelfFilter.READ) null else sorted.firstOrNull { it.lastOpenedAt > 0 && !it.finished }
     val shelf = sorted.filter {
@@ -387,11 +389,13 @@ private fun Cover(book: Book, modifier: Modifier) {
         }
     }
     Box(modifier.clip(CoverShape).background(MaterialTheme.colorScheme.surfaceContainerHigh)) {
-        val bmp = bitmap
-        if (bmp != null) {
-            Image(bmp, contentDescription = book.title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-        } else {
-            GeneratedCover(book)
+        Box(Modifier.fillMaxSize().alpha(if (book.finished) 0.4f else 1f)) {
+            val bmp = bitmap
+            if (bmp != null) {
+                Image(bmp, contentDescription = book.title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            } else {
+                GeneratedCover(book)
+            }
         }
         if (book.finished) {
             Icon(
