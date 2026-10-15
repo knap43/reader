@@ -3,7 +3,9 @@ package dev.knap43.reader.reader
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.view.ActionMode
 import android.view.Menu
@@ -21,16 +23,24 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.List
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.TextFields
+import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -70,13 +80,16 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import org.readium.r2.navigator.epub.EpubNavigatorFactory
+import org.readium.r2.navigator.HyperlinkNavigator
 import org.readium.r2.navigator.epub.EpubNavigatorFragment
 import org.readium.r2.navigator.input.InputListener
 import org.readium.r2.navigator.input.TapEvent
 import org.readium.r2.shared.publication.Link
 import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.publication.Publication
+import org.readium.r2.shared.publication.indexOfFirstWithHref
 import org.readium.r2.shared.publication.services.positions
+import org.readium.r2.shared.util.AbsoluteUrl
 
 class EpubReaderActivity : AppCompatActivity() {
 
@@ -91,6 +104,41 @@ class EpubReaderActivity : AppCompatActivity() {
 
     private val navigator: EpubNavigatorFragment
         get() = supportFragmentManager.findFragmentByTag(NAVIGATOR_TAG) as EpubNavigatorFragment
+
+    /** Where the reader was before following a link forward (to notes, say); offered as a way back. */
+    private val returnPoint = MutableStateFlow<Locator?>(null)
+
+    private val navigatorListener = object : EpubNavigatorFragment.Listener {
+        override fun shouldFollowInternalLink(link: Link, context: HyperlinkNavigator.LinkContext?): Boolean {
+            val here = navigator.currentLocator.value
+            // Keep the first point in a chain of note links, so Back returns to the text itself.
+            if (returnPoint.value == null && leadsForward(here, link, context)) returnPoint.value = here
+            return true
+        }
+
+        override fun onExternalLinkActivated(url: AbsoluteUrl) {
+            if (!url.isHttp) return
+            try {
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url.toString())))
+            } catch (_: ActivityNotFoundException) {
+            }
+        }
+    }
+
+    /** Footnote links, and links into this chapter or a later one (endnotes, notes sections). */
+    private fun leadsForward(here: Locator, link: Link, context: HyperlinkNavigator.LinkContext?): Boolean {
+        if (context is HyperlinkNavigator.FootnoteContext) return true
+        val order = publication.readingOrder
+        val from = order.indexOfFirstWithHref(here.href.removeFragment()) ?: return false
+        val to = order.indexOfFirstWithHref(link.url().removeFragment()) ?: return false
+        return to >= from
+    }
+
+    private fun goBackToReturnPoint() {
+        val target = returnPoint.value ?: return
+        returnPoint.value = null
+        lifecycleScope.launch { navigator.go(target) }
+    }
 
     /** Text picked for a dictionary lookup, shown in a sheet until dismissed. */
     private val lookup = mutableStateOf<String?>(null)
@@ -144,6 +192,7 @@ class EpubReaderActivity : AppCompatActivity() {
         supportFragmentManager.fragmentFactory = EpubNavigatorFactory(pub).createFragmentFactory(
             initialLocator = initialLocator,
             initialPreferences = app.prefs.settings.value.toEpubPreferences(),
+            listener = navigatorListener,
             configuration = EpubNavigatorFragment.Configuration {
                 selectionActionModeCallback = selectionCallback
             },
@@ -188,6 +237,14 @@ class EpubReaderActivity : AppCompatActivity() {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 navigator.currentLocator.collect { loc ->
                     locator.value = loc
+                    // Back on the page we left (e.g. through the note's own return link): nothing to offer.
+                    returnPoint.value?.let { back ->
+                        val p = back.locations.totalProgression
+                        val q = loc.locations.totalProgression
+                        if (back.href.isEquivalent(loc.href) && p != null && q != null && kotlin.math.abs(p - q) < 0.002) {
+                            returnPoint.value = null
+                        }
+                    }
                     app.library.updatePosition(
                         bookId,
                         loc.toJSON().toString(),
@@ -244,6 +301,7 @@ class EpubReaderActivity : AppCompatActivity() {
     private var positions: List<Locator>? = null
 
     private fun goToProgression(progression: Float) {
+        returnPoint.value = null
         lifecycleScope.launch {
             val all = positions ?: publication.positions().also { positions = it }
             if (all.isEmpty()) return@launch
@@ -296,6 +354,31 @@ class EpubReaderActivity : AppCompatActivity() {
                 )
             }
 
+            val back by returnPoint.collectAsStateWithLifecycle()
+            AnimatedVisibility(
+                visible = back != null,
+                enter = fadeIn() + slideInVertically { it / 2 },
+                exit = fadeOut() + slideOutVertically { it / 2 },
+                modifier = Modifier.align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(bottom = if (visible) 112.dp else 24.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Button(
+                        onClick = ::goBackToReturnPoint,
+                        contentPadding = ButtonDefaults.ButtonWithIconContentPadding,
+                    ) {
+                        Icon(Icons.AutoMirrored.Rounded.Undo, null, Modifier.size(ButtonDefaults.IconSize))
+                        Spacer(Modifier.width(ButtonDefaults.IconSpacing))
+                        Text("Back to reading")
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    FilledTonalIconButton(onClick = { returnPoint.value = null }) {
+                        Icon(Icons.Rounded.Close, "Dismiss")
+                    }
+                }
+            }
+
             AnimatedVisibility(
                 visible = visible,
                 enter = slideInVertically { it } + fadeIn(),
@@ -334,6 +417,7 @@ class EpubReaderActivity : AppCompatActivity() {
                                 .clickable {
                                     showToc = false
                                     chromeVisible.value = false
+                                    returnPoint.value = null
                                     go(link)
                                 }
                                 .padding(start = (24 + depth * 18).dp, end = 24.dp, top = 14.dp, bottom = 14.dp),
