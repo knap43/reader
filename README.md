@@ -12,10 +12,14 @@ An EPUB and PDF reader for Android, in Kotlin and Jetpack Compose with Material 
   - Text size, typeface (original, serif, sans) and line spacing.
   - Optional sliding page turns and hyphenation.
   - Select a word and tap *Define* for an offline English dictionary (WordNet 3.0).
-- **PDF**, rendered with Android's `PdfRenderer`:
+  - Book-wide search, bookmarks and highlights; tap a highlight to copy, define or remove it.
+- **PDF**, rendered with [PDFium](https://github.com/johngray1965/PdfiumAndroidKt):
   - Continuous scroll.
   - Pinch to zoom; double-tap to zoom or reset.
   - Go to page, and a warm night mode that inverts pages.
+  - Long-press and drag to select text, then highlight, define or copy it.
+  - Book-wide search, bookmarks, and the PDF's own outline as contents.
+- Contents, bookmarks and highlights share one tabbed sheet. Highlights export as Markdown, shared or saved to a file.
 - Optional full screen: hide the status and navigation bars (in the EPUB settings sheet, or the full-screen button in the PDF reader). Swipe from an edge to see them.
 - Your position is saved as you read and restored when you reopen a book.
 
@@ -34,4 +38,4 @@ Requirements: JDK 17 and the Android SDK, platform 35.
 adb install app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Stack: AGP 8.7.3, Kotlin 2.1.0, Compose BOM 2024.12.01, Readium 3.0.3; min SDK 26, target SDK 35.
+Stack: AGP 8.7.3, Kotlin 2.1.0, Compose BOM 2024.12.01, Readium 3.0.3, PdfiumAndroid 1.0.35; min SDK 26, target SDK 35.
