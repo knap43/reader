@@ -264,7 +264,7 @@ fun LibraryScreen(
             title = { Text("Remove “${book.title}”?") },
             text = { Text("The book and your reading position will be deleted from this app.") },
             confirmButton = {
-                TextButton(onClick = { app.library.remove(book.id); app.prefs.forgetBook(book.id); confirmRemove = null }) {
+                TextButton(onClick = { app.library.remove(book.id); app.prefs.forgetBook(book.id); app.annotations.forget(book.id); confirmRemove = null }) {
                     Text("Remove", color = MaterialTheme.colorScheme.error)
                 }
             },

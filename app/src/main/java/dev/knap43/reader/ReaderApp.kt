@@ -1,6 +1,7 @@
 package dev.knap43.reader
 
 import android.app.Application
+import dev.knap43.reader.data.Annotations
 import dev.knap43.reader.data.Books
 import dev.knap43.reader.data.Dictionary
 import dev.knap43.reader.data.Library
@@ -16,6 +17,8 @@ class ReaderApp : Application() {
         private set
     lateinit var dictionary: Dictionary
         private set
+    lateinit var annotations: Annotations
+        private set
 
     override fun onCreate() {
         super.onCreate()
@@ -23,6 +26,7 @@ class ReaderApp : Application() {
         books = Books(this, library)
         prefs = ReaderPrefs(this)
         dictionary = Dictionary(this)
+        annotations = Annotations(File(filesDir, "annotations"))
     }
 }
 

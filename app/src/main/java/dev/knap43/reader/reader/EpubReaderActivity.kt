@@ -38,12 +38,16 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.List
+import androidx.compose.material.icons.rounded.Bookmark
+import androidx.compose.material.icons.rounded.BookmarkBorder
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.TextFields
 import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
@@ -73,13 +77,19 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import dev.knap43.reader.R
+import dev.knap43.reader.data.Book
+import dev.knap43.reader.data.Bookmark
+import dev.knap43.reader.data.Highlight
 import dev.knap43.reader.data.PageTheme
 import dev.knap43.reader.readerApp
 import dev.knap43.reader.ui.theme.AppTheme
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import org.readium.r2.navigator.epub.EpubNavigatorFactory
+import org.readium.r2.navigator.DecorableNavigator
+import org.readium.r2.navigator.Decoration
 import org.readium.r2.navigator.HyperlinkNavigator
 import org.readium.r2.navigator.epub.EpubNavigatorFragment
 import org.readium.r2.navigator.input.InputListener
@@ -89,6 +99,7 @@ import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.publication.Publication
 import org.readium.r2.shared.publication.indexOfFirstWithHref
 import org.readium.r2.shared.publication.services.positions
+import org.readium.r2.shared.publication.services.search.search
 import org.readium.r2.shared.util.AbsoluteUrl
 
 class EpubReaderActivity : AppCompatActivity() {
@@ -140,28 +151,132 @@ class EpubReaderActivity : AppCompatActivity() {
         lifecycleScope.launch { navigator.go(target) }
     }
 
+    private lateinit var book: Book
+
+    /** Highlight tapped in the text, offered for copying or removal. */
+    private val tappedHighlight = mutableStateOf<Highlight?>(null)
+
+    // Book-wide search; results outlive the sheet so it reopens where it was.
+    private val searchQuery = mutableStateOf("")
+    private val searchedFor = mutableStateOf<String?>(null)
+    private val searchResults = MutableStateFlow<List<Locator>>(emptyList())
+    private val searching = mutableStateOf(false)
+    private var searchJob: Job? = null
+
+    private fun search(query: String) {
+        searchJob?.cancel()
+        searchResults.value = emptyList()
+        searchedFor.value = query
+        searching.value = true
+        searchJob = lifecycleScope.launch {
+            val iterator = publication.search(query)
+            try {
+                while (iterator != null) {
+                    val page = iterator.next().getOrNull() ?: break
+                    searchResults.value = searchResults.value + page.locators
+                }
+            } finally {
+                iterator?.close()
+                searching.value = false
+            }
+        }
+    }
+
+    /** Jumps to a search match and marks it until the next search or the sheet is used again. */
+    private fun openSearchResult(target: Locator) {
+        lifecycleScope.launch {
+            navigator.applyDecorations(
+                listOf(Decoration("search", target, Decoration.Style.Underline(tint = SEARCH_TINT))),
+                GROUP_SEARCH,
+            )
+            navigator.go(target)
+        }
+    }
+
+    private fun clearSearchMark() {
+        lifecycleScope.launch { navigator.applyDecorations(emptyList(), GROUP_SEARCH) }
+    }
+
+    /** The table-of-contents entry a position belongs to, falling back to the locator's own title. */
+    private fun chapterTitle(loc: Locator): String? {
+        val href = loc.href.removeFragment()
+        return flatten(publication.tableOfContents).firstOrNull { (link, _) ->
+            link.url().removeFragment().isEquivalent(href)
+        }?.first?.title ?: loc.title
+    }
+
+    private fun goTo(loc: Locator) {
+        returnPoint.value = null
+        lifecycleScope.launch { navigator.go(loc) }
+    }
+
+    private fun parseLocator(json: String) = runCatching { Locator.fromJSON(JSONObject(json)) }.getOrNull()
+
+    /** The bookmark on the page being read, matched by Readium's position index. */
+    private fun bookmarkHere(bookmarks: List<Bookmark>, here: Locator?): Bookmark? {
+        here ?: return null
+        val pos = here.locations.position
+        return bookmarks.firstOrNull { b ->
+            val l = parseLocator(b.position) ?: return@firstOrNull false
+            l.href.isEquivalent(here.href) && when {
+                pos != null && l.locations.position != null -> l.locations.position == pos
+                else -> kotlin.math.abs((l.locations.progression ?: -1.0) - (here.locations.progression ?: -2.0)) < 0.01
+            }
+        }
+    }
+
+    private fun toggleBookmark() {
+        val here = locator.value ?: return
+        val annotations = readerApp.annotations
+        val existing = bookmarkHere(annotations.of(bookId).value.bookmarks, here)
+        if (existing != null) {
+            annotations.removeBookmark(bookId, existing.id)
+        } else {
+            val pct = ((here.locations.totalProgression ?: 0.0) * 100).toInt()
+            annotations.addBookmark(
+                bookId,
+                Bookmark(
+                    label = chapterTitle(here)?.let { "$it · $pct%" } ?: "$pct%",
+                    progress = (here.locations.totalProgression ?: 0.0).toFloat(),
+                    position = here.toJSON().toString(),
+                ),
+            )
+        }
+    }
+
     /** Text picked for a dictionary lookup, shown in a sheet until dismissed. */
     private val lookup = mutableStateOf<String?>(null)
 
     /** Replaces the system text-selection menu, so it carries Copy alongside Define. */
     private val selectionCallback = object : ActionMode.Callback {
         override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
-            menu.add(Menu.NONE, MENU_DEFINE, 0, "Define")
-            menu.add(Menu.NONE, MENU_COPY, 1, android.R.string.copy)
+            menu.add(Menu.NONE, MENU_HIGHLIGHT, 0, "Highlight")
+            menu.add(Menu.NONE, MENU_DEFINE, 1, "Define")
+            menu.add(Menu.NONE, MENU_COPY, 2, android.R.string.copy)
             return true
         }
 
         override fun onPrepareActionMode(mode: ActionMode, menu: Menu) = false
 
         override fun onActionItemClicked(mode: ActionMode, item: MenuItem): Boolean {
-            if (item.itemId != MENU_DEFINE && item.itemId != MENU_COPY) return false
+            if (item.itemId !in setOf(MENU_DEFINE, MENU_COPY, MENU_HIGHLIGHT)) return false
             lifecycleScope.launch {
                 // Read the selection before closing the menu, which can drop it.
-                val text = navigator.currentSelection()?.locator?.text?.highlight?.trim()
+                val selected = navigator.currentSelection()?.locator
+                val text = selected?.text?.highlight?.trim()
                 mode.finish()
                 navigator.clearSelection()
-                if (text.isNullOrEmpty()) return@launch
+                if (selected == null || text.isNullOrEmpty()) return@launch
                 when (item.itemId) {
+                    MENU_HIGHLIGHT -> readerApp.annotations.addHighlight(
+                        bookId,
+                        Highlight(
+                            text = text,
+                            chapter = chapterTitle(selected),
+                            progress = (selected.locations.totalProgression ?: locator.value?.locations?.totalProgression ?: 0.0).toFloat(),
+                            position = selected.toJSON().toString(),
+                        ),
+                    )
                     MENU_DEFINE -> lookup.value = text
                     MENU_COPY -> getSystemService(ClipboardManager::class.java)
                         .setPrimaryClip(ClipData.newPlainText(null, text))
@@ -186,6 +301,7 @@ class EpubReaderActivity : AppCompatActivity() {
         }
         bookId = id
         publication = pub
+        this.book = book
 
         val initialLocator = book.position?.let { runCatching { Locator.fromJSON(JSONObject(it)) }.getOrNull() }
         // The fragment factory must be in place before super.onCreate restores fragments.
@@ -232,6 +348,23 @@ class EpubReaderActivity : AppCompatActivity() {
                 return true
             }
         })
+
+        navigator.addDecorationListener(GROUP_HIGHLIGHTS, object : DecorableNavigator.Listener {
+            override fun onDecorationActivated(event: DecorableNavigator.OnActivatedEvent): Boolean {
+                tappedHighlight.value = app.annotations.of(bookId).value.highlights.firstOrNull { it.id == event.decoration.id }
+                return tappedHighlight.value != null
+            }
+        })
+        lifecycleScope.launch {
+            app.annotations.of(bookId).collect { a ->
+                navigator.applyDecorations(
+                    a.highlights.mapNotNull { h ->
+                        parseLocator(h.position)?.let { Decoration(h.id, it, Decoration.Style.Highlight(tint = HIGHLIGHT_TINT)) }
+                    },
+                    GROUP_HIGHLIGHTS,
+                )
+            }
+        }
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -319,8 +452,11 @@ class EpubReaderActivity : AppCompatActivity() {
         val visible by chromeVisible
         val loc by locator.collectAsStateWithLifecycle()
         val settings by app.prefs.settings.collectAsStateWithLifecycle()
-        var showToc by remember { mutableStateOf(false) }
+        val annotations by app.annotations.of(bookId).collectAsStateWithLifecycle()
+        var showNav by remember { mutableStateOf(false) }
+        var showSearch by remember { mutableStateOf(false) }
         var showSettings by remember { mutableStateOf(false) }
+        val marked = remember(annotations.bookmarks, loc) { bookmarkHere(annotations.bookmarks, loc) != null }
         val barColor = MaterialTheme.colorScheme.surfaceContainer
 
         Box(Modifier.fillMaxSize()) {
@@ -343,10 +479,16 @@ class EpubReaderActivity : AppCompatActivity() {
                         )
                     },
                     actions = {
-                        if (publication.tableOfContents.isNotEmpty()) {
-                            IconButton(onClick = { showToc = true }) {
-                                Icon(Icons.AutoMirrored.Rounded.List, "Contents")
-                            }
+                        IconButton(onClick = { showSearch = true }) { Icon(Icons.Rounded.Search, "Search") }
+                        IconButton(onClick = ::toggleBookmark) {
+                            Icon(
+                                if (marked) Icons.Rounded.Bookmark else Icons.Rounded.BookmarkBorder,
+                                if (marked) "Remove bookmark" else "Bookmark this page",
+                                tint = if (marked) MaterialTheme.colorScheme.primary else LocalContentColor.current,
+                            )
+                        }
+                        IconButton(onClick = { showNav = true }) {
+                            Icon(Icons.AutoMirrored.Rounded.List, "Contents, bookmarks and highlights")
                         }
                         IconButton(onClick = { showSettings = true }) { Icon(Icons.Rounded.TextFields, "Reading settings") }
                     },
@@ -395,36 +537,58 @@ class EpubReaderActivity : AppCompatActivity() {
             }
         }
 
-        if (showToc) {
-            ModalBottomSheet(
-                onDismissRequest = { showToc = false },
-                containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-            ) {
-                val entries = remember { flatten(publication.tableOfContents) }
-                Text(
-                    "Contents",
-                    style = MaterialTheme.typography.titleLarge,
-                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
-                )
-                LazyColumn(Modifier.navigationBarsPadding()) {
-                    items(entries) { (link, depth) ->
-                        Text(
-                            link.title ?: "Untitled",
-                            style = if (depth == 0) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.bodyMedium,
-                            color = if (depth == 0) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    showToc = false
-                                    chromeVisible.value = false
-                                    returnPoint.value = null
-                                    go(link)
-                                }
-                                .padding(start = (24 + depth * 18).dp, end = 24.dp, top = 14.dp, bottom = 14.dp),
-                        )
+        if (showNav) {
+            val close = { showNav = false; chromeVisible.value = false }
+            NavigationSheet(
+                book = book,
+                contents = remember {
+                    flatten(publication.tableOfContents).map { (link, depth) ->
+                        TocEntry(link.title ?: "Untitled", depth) { close(); returnPoint.value = null; go(link) }
                     }
-                }
-            }
+                },
+                bookmarks = annotations.bookmarks,
+                highlights = annotations.highlights,
+                onOpenBookmark = { b -> close(); parseLocator(b.position)?.let(::goTo) },
+                onDeleteBookmark = { b -> app.annotations.removeBookmark(bookId, b.id) },
+                onOpenHighlight = { h -> close(); parseLocator(h.position)?.let(::goTo) },
+                onDeleteHighlight = { h -> app.annotations.removeHighlight(bookId, h.id) },
+                onDismiss = { showNav = false },
+            )
+        }
+
+        if (showSearch) {
+            val results by searchResults.collectAsStateWithLifecycle()
+            SearchSheet(
+                query = searchQuery.value,
+                onQueryChange = { searchQuery.value = it },
+                hits = remember(results) {
+                    results.map {
+                        SearchHit(chapterTitle(it), it.text.before.orEmpty(), it.text.highlight.orEmpty(), it.text.after.orEmpty())
+                    }
+                },
+                searching = searching.value,
+                searchedFor = searchedFor.value,
+                onSearch = { clearSearchMark(); search(it) },
+                onOpen = { i ->
+                    showSearch = false
+                    chromeVisible.value = false
+                    results.getOrNull(i)?.let(::openSearchResult)
+                },
+                onDismiss = { showSearch = false },
+            )
+        }
+
+        tappedHighlight.value?.let { h ->
+            HighlightDialog(
+                highlight = h,
+                onCopy = {
+                    getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText(null, h.text))
+                    tappedHighlight.value = null
+                },
+                onDefine = { lookup.value = h.text; tappedHighlight.value = null },
+                onDelete = { app.annotations.removeHighlight(bookId, h.id); tappedHighlight.value = null },
+                onDismiss = { tappedHighlight.value = null },
+            )
         }
 
         lookup.value?.let { text ->
@@ -448,6 +612,11 @@ class EpubReaderActivity : AppCompatActivity() {
         private const val NAVIGATOR_TAG = "navigator"
         private const val MENU_DEFINE = 1
         private const val MENU_COPY = 2
+        private const val MENU_HIGHLIGHT = 3
+        private const val GROUP_HIGHLIGHTS = "highlights"
+        private const val GROUP_SEARCH = "search"
+        private const val HIGHLIGHT_TINT = 0xFFE1A34F.toInt()
+        private const val SEARCH_TINT = 0xFF6FA8DC.toInt()
 
         fun intent(context: Context, bookId: String) =
             Intent(context, EpubReaderActivity::class.java).putExtra(EXTRA_BOOK_ID, bookId)
