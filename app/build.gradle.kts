@@ -66,4 +66,7 @@ dependencies {
     implementation("org.readium.kotlin-toolkit:readium-shared:$readium")
     implementation("org.readium.kotlin-toolkit:readium-streamer:$readium")
     implementation("org.readium.kotlin-toolkit:readium-navigator:$readium")
+
+    // PDF rendering with a text layer (search, selection, highlights)
+    implementation("io.legere:pdfiumandroid:1.0.35")
 }
