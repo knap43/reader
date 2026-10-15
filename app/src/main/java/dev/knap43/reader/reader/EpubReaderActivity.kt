@@ -1,8 +1,13 @@
 package dev.knap43.reader.reader
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.view.ActionMode
+import android.view.Menu
+import android.view.MenuItem
 import android.view.View
 import android.widget.ImageView
 import androidx.activity.enableEdgeToEdge
@@ -87,6 +92,39 @@ class EpubReaderActivity : AppCompatActivity() {
     private val navigator: EpubNavigatorFragment
         get() = supportFragmentManager.findFragmentByTag(NAVIGATOR_TAG) as EpubNavigatorFragment
 
+    /** Text picked for a dictionary lookup, shown in a sheet until dismissed. */
+    private val lookup = mutableStateOf<String?>(null)
+
+    /** Replaces the system text-selection menu, so it carries Copy alongside Define. */
+    private val selectionCallback = object : ActionMode.Callback {
+        override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
+            menu.add(Menu.NONE, MENU_DEFINE, 0, "Define")
+            menu.add(Menu.NONE, MENU_COPY, 1, android.R.string.copy)
+            return true
+        }
+
+        override fun onPrepareActionMode(mode: ActionMode, menu: Menu) = false
+
+        override fun onActionItemClicked(mode: ActionMode, item: MenuItem): Boolean {
+            if (item.itemId != MENU_DEFINE && item.itemId != MENU_COPY) return false
+            lifecycleScope.launch {
+                // Read the selection before closing the menu, which can drop it.
+                val text = navigator.currentSelection()?.locator?.text?.highlight?.trim()
+                mode.finish()
+                navigator.clearSelection()
+                if (text.isNullOrEmpty()) return@launch
+                when (item.itemId) {
+                    MENU_DEFINE -> lookup.value = text
+                    MENU_COPY -> getSystemService(ClipboardManager::class.java)
+                        .setPrimaryClip(ClipData.newPlainText(null, text))
+                }
+            }
+            return true
+        }
+
+        override fun onDestroyActionMode(mode: ActionMode) {}
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         val app = readerApp
         val id = intent.getStringExtra(EXTRA_BOOK_ID)
@@ -106,6 +144,9 @@ class EpubReaderActivity : AppCompatActivity() {
         supportFragmentManager.fragmentFactory = EpubNavigatorFactory(pub).createFragmentFactory(
             initialLocator = initialLocator,
             initialPreferences = app.prefs.settings.value.toEpubPreferences(),
+            configuration = EpubNavigatorFragment.Configuration {
+                selectionActionModeCallback = selectionCallback
+            },
         )
 
         enableEdgeToEdge()
@@ -302,6 +343,10 @@ class EpubReaderActivity : AppCompatActivity() {
             }
         }
 
+        lookup.value?.let { text ->
+            DictionarySheet(text, onDismiss = { lookup.value = null })
+        }
+
         if (showSettings) {
             ReadingSettingsSheet(
                 settings = settings,
@@ -317,6 +362,8 @@ class EpubReaderActivity : AppCompatActivity() {
     companion object {
         private const val EXTRA_BOOK_ID = "book_id"
         private const val NAVIGATOR_TAG = "navigator"
+        private const val MENU_DEFINE = 1
+        private const val MENU_COPY = 2
 
         fun intent(context: Context, bookId: String) =
             Intent(context, EpubReaderActivity::class.java).putExtra(EXTRA_BOOK_ID, bookId)

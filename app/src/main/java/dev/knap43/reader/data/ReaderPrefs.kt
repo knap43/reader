@@ -49,9 +49,14 @@ data class ReadingSettings(
     val hideSystemBars: Boolean = false,
     /** Slide EPUB pages when turning them with taps or keys. */
     val animatePageTurns: Boolean = false,
+    /** Break long words across lines in EPUBs, in the book's own language. */
+    val hyphenate: Boolean = false,
 ) {
+    /** Choices that only take effect once the book's own styling is relaxed. */
+    val overridesPublisherStyles get() = font != FontChoice.ORIGINAL || spacing != Spacing.ORIGINAL || hyphenate
+
     fun toEpubPreferences(): EpubPreferences {
-        val custom = font != FontChoice.ORIGINAL || spacing != Spacing.ORIGINAL
+        val custom = overridesPublisherStyles
         return EpubPreferences(
             theme = if (theme.isLight) (if (theme == PageTheme.SEPIA) Theme.SEPIA else Theme.LIGHT) else Theme.DARK,
             backgroundColor = ReadiumColor(theme.background.toInt()),
@@ -59,7 +64,8 @@ data class ReadingSettings(
             fontSize = fontScale.toDouble(),
             fontFamily = font.family?.let { FontFamily(it) },
             lineHeight = spacing.lineHeight,
-            // Line height and font overrides only apply once publisher styles are off.
+            hyphens = if (hyphenate) true else null,
+            // Line height, font and hyphenation overrides only apply once publisher styles are off.
             publisherStyles = !custom,
         )
     }
@@ -102,6 +108,7 @@ class ReaderPrefs(context: Context) {
             .putBoolean("pdfNight", next.pdfNight)
             .putBoolean("hideSystemBars", next.hideSystemBars)
             .putBoolean("animatePageTurns", next.animatePageTurns)
+            .putBoolean("hyphenate", next.hyphenate)
             .apply()
     }
 
@@ -113,6 +120,7 @@ class ReaderPrefs(context: Context) {
         pdfNight = sp.getBoolean("pdfNight", true),
         hideSystemBars = sp.getBoolean("hideSystemBars", false),
         animatePageTurns = sp.getBoolean("animatePageTurns", false),
+        hyphenate = sp.getBoolean("hyphenate", false),
     )
 
     private inline fun <reified E : Enum<E>> enumOr(name: String?, default: E): E =

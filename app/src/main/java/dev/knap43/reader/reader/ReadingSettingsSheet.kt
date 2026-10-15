@@ -15,7 +15,9 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.Add
@@ -53,7 +55,8 @@ fun ReadingSettingsSheet(
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
         Column(
-            Modifier.navigationBarsPadding().padding(horizontal = 24.dp).padding(bottom = 24.dp),
+            Modifier.verticalScroll(rememberScrollState())
+                .navigationBarsPadding().padding(horizontal = 24.dp).padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
             Section("Page") {
@@ -114,7 +117,7 @@ fun ReadingSettingsSheet(
                         ) { Text(spacing.label, maxLines = 1, fontSize = 13.sp) }
                     }
                 }
-                if (settings.font != FontChoice.ORIGINAL || settings.spacing != Spacing.ORIGINAL) {
+                if (settings.overridesPublisherStyles) {
                     Text(
                         "The book's own styling is relaxed so these choices can apply.",
                         style = MaterialTheme.typography.bodySmall,
@@ -135,6 +138,11 @@ fun ReadingSettingsSheet(
                     subtitle = "Pages slide when you tap an edge",
                     checked = settings.animatePageTurns,
                 ) { on -> onChange { it.copy(animatePageTurns = on) } }
+                SwitchRow(
+                    title = "Hyphenate words",
+                    subtitle = "Break long words at line ends",
+                    checked = settings.hyphenate,
+                ) { on -> onChange { it.copy(hyphenate = on) } }
             }
         }
     }

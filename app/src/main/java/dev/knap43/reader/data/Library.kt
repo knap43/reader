@@ -29,6 +29,8 @@ data class Book(
     val position: String? = null,
     val addedAt: Long = System.currentTimeMillis(),
     val lastOpenedAt: Long = 0L,
+    /** Marked as read, by hand or by reaching [FINISHED_AT]. */
+    val finished: Boolean = false,
 ) {
     val file get() = File(path)
 
@@ -43,8 +45,12 @@ data class Book(
         .put("position", position)
         .put("addedAt", addedAt)
         .put("lastOpenedAt", lastOpenedAt)
+        .put("finished", finished)
 
     companion object {
+        /** Reading progress at which a book is marked as read on its own. */
+        const val FINISHED_AT = 0.98f
+
         fun fromJson(o: JSONObject) = Book(
             id = o.getString("id"),
             title = o.getString("title"),
@@ -56,6 +62,8 @@ data class Book(
             position = o.optStringOrNull("position"),
             addedAt = o.optLong("addedAt"),
             lastOpenedAt = o.optLong("lastOpenedAt"),
+            // Books saved before this flag existed count as read once they're nearly done.
+            finished = if (o.has("finished")) o.optBoolean("finished") else o.optDouble("progress", 0.0) >= FINISHED_AT,
         )
 
         private fun JSONObject.optStringOrNull(key: String): String? =
@@ -88,8 +96,18 @@ class Library(private val store: File) {
         list.map { if (it.id == id) it.copy(lastOpenedAt = System.currentTimeMillis()) else it }
     }
 
+    /** Saves the position; crossing [Book.FINISHED_AT] marks the book as read (but never unmarks it). */
     fun updatePosition(id: String, position: String, progress: Float) = mutate { list ->
-        list.map { if (it.id == id) it.copy(position = position, progress = progress.coerceIn(0f, 1f)) else it }
+        list.map {
+            if (it.id != id) return@map it
+            val p = progress.coerceIn(0f, 1f)
+            val crossed = it.progress < Book.FINISHED_AT && p >= Book.FINISHED_AT
+            it.copy(position = position, progress = p, finished = it.finished || crossed)
+        }
+    }
+
+    fun setFinished(id: String, finished: Boolean) = mutate { list ->
+        list.map { if (it.id == id) it.copy(finished = finished) else it }
     }
 
     private fun mutate(change: (List<Book>) -> List<Book>) {

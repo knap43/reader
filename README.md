@@ -4,13 +4,14 @@ An EPUB and PDF reader for Android, in Kotlin and Jetpack Compose with Material 
 
 ## What it does
 
-- **Library.** A shelf with real covers. The book you're reading is pinned under *Continue reading*. Add books with the picker, or open an EPUB or PDF from any file manager with *Open with → Reader*. Long-press a book to remove it.
+- **Library.** A shelf with real covers. The book you're reading is pinned under *Continue reading*. Add books with the picker, or open an EPUB or PDF from any file manager with *Open with → Reader*. Long-press a book to mark it as read or remove it. Books past 98% are marked as read on their own; a checkmark shows on their cover, and the *All / Unread / Read* chips filter the shelf.
 - **EPUB**, rendered with [Readium](https://github.com/readium/kotlin-toolkit):
   - Tap the left or right edge to turn pages; tap the middle to show the controls.
   - Table of contents, and a progress slider that jumps anywhere in the book.
   - Page themes: Dusk, Night, Sepia, Paper.
   - Text size, typeface (original, serif, sans) and line spacing.
-  - Optional sliding page turns.
+  - Optional sliding page turns and hyphenation.
+  - Select a word and tap *Define* for an offline English dictionary (WordNet 3.0).
 - **PDF**, rendered with Android's `PdfRenderer`:
   - Continuous scroll.
   - Pinch to zoom; double-tap to zoom or reset.
@@ -19,6 +20,10 @@ An EPUB and PDF reader for Android, in Kotlin and Jetpack Compose with Material 
 - Your position is saved as you read and restored when you reopen a book.
 
 Books are copied into the app's private storage when added, so the originals can move or disappear without breaking the library.
+
+## Dictionary
+
+`app/src/main/assets/dictionary/en.db` is built from [WordNet 3.0](https://wordnet.princeton.edu/) by `tools/build_dictionary.py`; its license is in `app/src/main/assets/dictionary/LICENSE-WordNet`.
 
 ## Build
 

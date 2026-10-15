@@ -26,11 +26,15 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.MenuBook
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AutoStories
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.RemoveDone
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material3.AlertDialog
@@ -40,6 +44,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LargeTopAppBar
@@ -61,6 +67,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -89,6 +96,8 @@ import kotlinx.coroutines.withContext
 
 private val CoverShape = RoundedCornerShape(10.dp)
 
+private enum class ShelfFilter(val label: String) { ALL("All"), UNREAD("Unread"), READ("Read") }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryScreen(
@@ -104,6 +113,7 @@ fun LibraryScreen(
     var actionsFor by remember { mutableStateOf<Book?>(null) }
     var appearanceOpen by remember { mutableStateOf(false) }
     var confirmRemove by remember { mutableStateOf<Book?>(null) }
+    var filter by rememberSaveable { mutableStateOf(ShelfFilter.ALL) }
 
     LaunchedEffect(Unit) { messages.collect { snackbar.showSnackbar(it) } }
 
@@ -115,8 +125,14 @@ fun LibraryScreen(
     val sorted = remember(books) {
         books.sortedWith(compareByDescending<Book> { maxOf(it.lastOpenedAt, it.addedAt) })
     }
-    val current = sorted.firstOrNull { it.lastOpenedAt > 0 && it.progress < 0.995f }
-    val shelf = if (current != null) sorted - current else sorted
+    val current = if (filter == ShelfFilter.READ) null else sorted.firstOrNull { it.lastOpenedAt > 0 && !it.finished }
+    val shelf = sorted.filter {
+        it != current && when (filter) {
+            ShelfFilter.ALL -> true
+            ShelfFilter.UNREAD -> !it.finished
+            ShelfFilter.READ -> it.finished
+        }
+    }
 
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
 
@@ -157,6 +173,31 @@ fun LibraryScreen(
                 verticalArrangement = Arrangement.spacedBy(20.dp),
                 modifier = Modifier.fillMaxSize().padding(padding),
             ) {
+                item(span = { GridItemSpan(maxLineSpan) }, key = "filters") {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ShelfFilter.entries.forEach { f ->
+                            FilterChip(
+                                selected = filter == f,
+                                onClick = { filter = f },
+                                label = { Text(f.label) },
+                                leadingIcon = if (filter == f) {
+                                    { Icon(Icons.Rounded.Check, null, Modifier.size(FilterChipDefaults.IconSize)) }
+                                } else null,
+                            )
+                        }
+                    }
+                }
+                if (current == null && shelf.isEmpty()) {
+                    item(span = { GridItemSpan(maxLineSpan) }, key = "filter-empty") {
+                        Text(
+                            if (filter == ShelfFilter.READ) "No finished books yet." else "Everything here is read.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth().padding(top = 48.dp),
+                        )
+                    }
+                }
                 if (current != null) {
                     item(span = { GridItemSpan(maxLineSpan) }, key = "continue") {
                         ContinueCard(current, onClick = { onOpen(current) }, onLongClick = { actionsFor = current })
@@ -196,6 +237,14 @@ fun LibraryScreen(
                     leadingContent = { Icon(Icons.AutoMirrored.Rounded.MenuBook, null) },
                     colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
                     modifier = Modifier.clickable { actionsFor = null; onOpen(book) },
+                )
+                ListItem(
+                    headlineContent = { Text(if (book.finished) "Mark as unread" else "Mark as read") },
+                    leadingContent = {
+                        Icon(if (book.finished) Icons.Rounded.RemoveDone else Icons.Rounded.CheckCircle, null)
+                    },
+                    colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+                    modifier = Modifier.clickable { actionsFor = null; app.library.setFinished(book.id, !book.finished) },
                 )
                 ListItem(
                     headlineContent = { Text("Remove from library", color = MaterialTheme.colorScheme.error) },
@@ -294,7 +343,7 @@ private fun BookTile(book: Book, onClick: () -> Unit, onLongClick: () -> Unit) {
         Modifier.clip(CoverShape).combinedClickable(onClick = onClick, onLongClick = onLongClick)
     ) {
         Cover(book, Modifier.fillMaxWidth().aspectRatio(2f / 3f))
-        if (book.progress > 0f) {
+        if (book.progress > 0f && !book.finished) {
             Spacer(Modifier.height(8.dp))
             ProgressLine(book.progress)
         }
@@ -343,6 +392,17 @@ private fun Cover(book: Book, modifier: Modifier) {
             Image(bmp, contentDescription = book.title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         } else {
             GeneratedCover(book)
+        }
+        if (book.finished) {
+            Icon(
+                Icons.Rounded.Check,
+                contentDescription = "Read",
+                tint = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier.align(Alignment.TopStart).padding(6.dp)
+                    .background(MaterialTheme.colorScheme.primary, CircleShape)
+                    .padding(2.dp)
+                    .size(14.dp),
+            )
         }
         if (book.format == Format.PDF) {
             Text(
