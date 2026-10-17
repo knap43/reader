@@ -527,7 +527,10 @@ class PdfReaderActivity : ComponentActivity() {
                     ProgressPanel(
                         chapter = sectionOf(currentPage),
                         progress = progressOf(currentPage),
-                        label = "Page ${currentPage + 1} of ${doc.pageCount}",
+                        label = { d ->
+                            val page = d?.let { (it * (doc.pageCount - 1)).toInt() } ?: currentPage
+                            "Page ${page + 1} of ${doc.pageCount}"
+                        },
                         onSeek = { p ->
                             scope.launch { listState.scrollToItem((p * (doc.pageCount - 1)).toInt()) }
                         },

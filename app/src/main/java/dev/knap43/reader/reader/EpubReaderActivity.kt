@@ -119,6 +119,27 @@ class EpubReaderActivity : AppCompatActivity() {
     /** Where the reader was before following a link forward (to notes, say); offered as a way back. */
     private val returnPoint = MutableStateFlow<Locator?>(null)
 
+    /**
+     * Readium's fixed positions (~1024 characters each), used as the book's pages: unlike screen
+     * pages they don't shift with font size or orientation, so a bookmark keeps its number.
+     * Empty until computed, which can take a moment for a long book.
+     */
+    private val pages = MutableStateFlow<List<Locator>>(emptyList())
+
+    /** The 1-based page a locator falls on, or null while pages are still being counted. */
+    private fun pageOf(loc: Locator): Int? {
+        val all = pages.value
+        if (all.isEmpty()) return null
+        loc.locations.position?.let { return it.coerceIn(1, all.size) }
+        // Selections and search hits carry no position; place them by progression instead.
+        val t = loc.locations.totalProgression ?: return null
+        val i = all.indexOfLast { (it.locations.totalProgression ?: 0.0) <= t }
+        return i.coerceAtLeast(0) + 1
+    }
+
+    /** The page a slider value lands on; matches [goToProgression]. */
+    private fun pageAt(progression: Float, total: Int) = (progression * (total - 1)).toInt().coerceIn(0, total - 1) + 1
+
     private val navigatorListener = object : EpubNavigatorFragment.Listener {
         override fun shouldFollowInternalLink(link: Link, context: HyperlinkNavigator.LinkContext?): Boolean {
             val here = navigator.currentLocator.value
@@ -232,11 +253,11 @@ class EpubReaderActivity : AppCompatActivity() {
         if (existing != null) {
             annotations.removeBookmark(bookId, existing.id)
         } else {
-            val pct = ((here.locations.totalProgression ?: 0.0) * 100).toInt()
+            val page = pageOf(here)
             annotations.addBookmark(
                 bookId,
                 Bookmark(
-                    label = chapterTitle(here)?.let { "$it · $pct%" } ?: "$pct%",
+                    label = chapterTitle(here) ?: page?.let { "Page $it" } ?: "Bookmark",
                     progress = (here.locations.totalProgression ?: 0.0).toFloat(),
                     position = here.toJSON().toString(),
                 ),
@@ -389,6 +410,8 @@ class EpubReaderActivity : AppCompatActivity() {
             }
         }
 
+        lifecycleScope.launch { pages.value = publication.positions() }
+
         lifecycleScope.launch {
             app.prefs.settings.collect { s ->
                 navigator.submitPreferences(s.toEpubPreferences())
@@ -446,16 +469,12 @@ class EpubReaderActivity : AppCompatActivity() {
         lifecycleScope.launch { navigator.go(link) }
     }
 
-    /** Every reading position in the book, computed once on first seek. */
-    private var positions: List<Locator>? = null
-
     private fun goToProgression(progression: Float) {
         returnPoint.value = null
         lifecycleScope.launch {
-            val all = positions ?: publication.positions().also { positions = it }
+            val all = pages.value.ifEmpty { publication.positions().also { pages.value = it } }
             if (all.isEmpty()) return@launch
-            val index = (progression * (all.size - 1)).toInt().coerceIn(0, all.lastIndex)
-            navigator.go(all[index])
+            navigator.go(all[pageAt(progression, all.size) - 1])
         }
     }
 
@@ -469,6 +488,7 @@ class EpubReaderActivity : AppCompatActivity() {
         val loc by locator.collectAsStateWithLifecycle()
         val settings by app.prefs.settings.collectAsStateWithLifecycle()
         val annotations by app.annotations.of(bookId).collectAsStateWithLifecycle()
+        val total = pages.collectAsStateWithLifecycle().value.size
         var showNav by remember { mutableStateOf(false) }
         var showSearch by remember { mutableStateOf(false) }
         var showSettings by remember { mutableStateOf(false) }
@@ -548,6 +568,11 @@ class EpubReaderActivity : AppCompatActivity() {
                         chapter = loc?.title,
                         progress = loc?.locations?.totalProgression?.toFloat() ?: 0f,
                         onSeek = ::goToProgression,
+                        label = { dragged ->
+                            val page = if (dragged != null) pageAt(dragged, total) else loc?.let(::pageOf)
+                            if (total > 0 && page != null) "Page $page of $total"
+                            else "${(((dragged ?: loc?.locations?.totalProgression?.toFloat()) ?: 0f) * 100).toInt()}%"
+                        },
                     )
                 }
             }
@@ -562,13 +587,20 @@ class EpubReaderActivity : AppCompatActivity() {
                         TocEntry(link.title ?: "Untitled", depth) { close(); returnPoint.value = null; go(link) }
                     }
                 },
-                bookmarks = annotations.bookmarks,
+                // Older bookmarks carried their percentage in the label; the page now shows beside it.
+                bookmarks = annotations.bookmarks.map { b ->
+                    b.copy(label = b.label.replace(LEGACY_PERCENT, "").ifEmpty { "Bookmark" })
+                },
                 highlights = annotations.highlights,
                 onOpenBookmark = { b -> close(); parseLocator(b.position)?.let(::goTo) },
                 onDeleteBookmark = { b -> app.annotations.removeBookmark(bookId, b.id) },
                 onOpenHighlight = { h -> close(); parseLocator(h.position)?.let(::goTo) },
                 onDeleteHighlight = { h -> app.annotations.removeHighlight(bookId, h.id) },
                 onDismiss = { showNav = false },
+                placeOf = { position, progress ->
+                    total.takeIf { it > 0 }?.let { parseLocator(position)?.let(::pageOf) }?.let { "p. $it" }
+                        ?: "${(progress * 100).toInt()}%"
+                },
             )
         }
 
@@ -577,9 +609,10 @@ class EpubReaderActivity : AppCompatActivity() {
             SearchSheet(
                 query = searchQuery.value,
                 onQueryChange = { searchQuery.value = it },
-                hits = remember(results) {
+                hits = remember(results, total) {
                     results.map {
-                        SearchHit(chapterTitle(it), it.text.before.orEmpty(), it.text.highlight.orEmpty(), it.text.after.orEmpty())
+                        val place = listOfNotNull(chapterTitle(it), pageOf(it)?.let { n -> "p. $n" }).joinToString(" · ")
+                        SearchHit(place.ifEmpty { null }, it.text.before.orEmpty(), it.text.highlight.orEmpty(), it.text.after.orEmpty())
                     }
                 },
                 searching = searching.value,
@@ -633,6 +666,7 @@ class EpubReaderActivity : AppCompatActivity() {
         private const val GROUP_SEARCH = "search"
         /** Readium positions (~1024 characters each) one page turn may cover at small font sizes. */
         private const val MAX_READING_STEP = 3
+        private val LEGACY_PERCENT = Regex("""(^| · )\d+%$""")
         private const val HIGHLIGHT_TINT = 0xFFE1A34F.toInt()
         private const val SEARCH_TINT = 0xFF6FA8DC.toInt()
 
@@ -642,7 +676,13 @@ class EpubReaderActivity : AppCompatActivity() {
 }
 
 @Composable
-internal fun ProgressPanel(chapter: String?, progress: Float, onSeek: (Float) -> Unit, label: String? = null) {
+internal fun ProgressPanel(
+    chapter: String?,
+    progress: Float,
+    onSeek: (Float) -> Unit,
+    /** The readout beside the chapter; given the slider value while dragging, null at rest. */
+    label: (dragged: Float?) -> String = { d -> "${((d ?: progress) * 100).toInt()}%" },
+) {
     var dragging by remember { mutableStateOf(false) }
     var dragValue by remember { mutableFloatStateOf(progress) }
     LaunchedEffect(progress) { if (!dragging) dragValue = progress }
@@ -660,7 +700,7 @@ internal fun ProgressPanel(chapter: String?, progress: Float, onSeek: (Float) ->
                 modifier = Modifier.weight(1f),
             )
             Text(
-                label ?: "${(dragValue * 100).toInt()}%",
+                label(if (dragging) dragValue else null),
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.padding(start = 12.dp),

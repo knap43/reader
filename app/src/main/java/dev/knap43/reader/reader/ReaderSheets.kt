@@ -88,6 +88,8 @@ fun NavigationSheet(
     onDeleteHighlight: (Highlight) -> Unit,
     onDismiss: () -> Unit,
     initialTab: NavTab = if (contents.isEmpty()) NavTab.BOOKMARKS else NavTab.CONTENTS,
+    /** Where a saved position sits, e.g. "p. 142"; falls back to a percentage. */
+    placeOf: (position: String, progress: Float) -> String = { _, p -> "${(p * 100).toInt()}%" },
 ) {
     var tab by rememberSaveable { mutableStateOf(initialTab) }
     ModalBottomSheet(
@@ -127,7 +129,7 @@ fun NavigationSheet(
                         items(bookmarks, key = { it.id }) { b ->
                             AnnotationRow(
                                 title = b.label,
-                                meta = "${(b.progress * 100).toInt()}%",
+                                meta = placeOf(b.position, b.progress),
                                 onClick = { onOpenBookmark(b) },
                                 onDelete = { onDeleteBookmark(b) },
                             )
@@ -144,7 +146,7 @@ fun NavigationSheet(
                             items(highlights, key = { it.id }) { h ->
                                 AnnotationRow(
                                     title = "“${h.text.trim()}”",
-                                    meta = listOfNotNull(h.chapter, "${(h.progress * 100).toInt()}%").joinToString(" · "),
+                                    meta = listOfNotNull(h.chapter, placeOf(h.position, h.progress)).joinToString(" · "),
                                     serif = true,
                                     onClick = { onOpenHighlight(h) },
                                     onDelete = { onDeleteHighlight(h) },
