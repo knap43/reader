@@ -29,7 +29,7 @@ data class Book(
     val position: String? = null,
     val addedAt: Long = System.currentTimeMillis(),
     val lastOpenedAt: Long = 0L,
-    /** Marked as read, by hand or by reaching [FINISHED_AT]. */
+    /** Marked as read, by hand or by reading on past [FINISHED_AT]. */
     val finished: Boolean = false,
 ) {
     val file get() = File(path)
@@ -96,12 +96,15 @@ class Library(private val store: File) {
         list.map { if (it.id == id) it.copy(lastOpenedAt = System.currentTimeMillis()) else it }
     }
 
-    /** Saves the position; crossing [Book.FINISHED_AT] marks the book as read (but never unmarks it). */
-    fun updatePosition(id: String, position: String, progress: Float) = mutate { list ->
+    /**
+     * Saves the position. Reading across [Book.FINISHED_AT] marks the book as read (but never unmarks it);
+     * jumping across it — to the notes, a highlight, a search result, the slider's end — does not.
+     */
+    fun updatePosition(id: String, position: String, progress: Float, reading: Boolean) = mutate { list ->
         list.map {
             if (it.id != id) return@map it
             val p = progress.coerceIn(0f, 1f)
-            val crossed = it.progress < Book.FINISHED_AT && p >= Book.FINISHED_AT
+            val crossed = reading && it.progress < Book.FINISHED_AT && p >= Book.FINISHED_AT
             it.copy(position = position, progress = p, finished = it.finished || crossed)
         }
     }

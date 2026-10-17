@@ -382,7 +382,9 @@ class EpubReaderActivity : AppCompatActivity() {
                         bookId,
                         loc.toJSON().toString(),
                         loc.locations.totalProgression?.toFloat() ?: 0f,
+                        reading = isReadingStep(lastLocator, loc),
                     )
+                    lastLocator = loc
                 }
             }
         }
@@ -424,6 +426,20 @@ class EpubReaderActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         if (isFinishing && ::bookId.isInitialized) readerApp.books.close(bookId)
+    }
+
+    /** The previous position seen, to tell a page turn from a jump. Null until the book has opened. */
+    private var lastLocator: Locator? = null
+
+    /** A short step forward reads like a page turn; anything else (links, contents, search, seeking) is a jump. */
+    private fun isReadingStep(from: Locator?, to: Locator): Boolean {
+        from ?: return false
+        val a = from.locations.position
+        val b = to.locations.position
+        if (a != null && b != null) return b - a in 0..MAX_READING_STEP
+        val p = from.locations.totalProgression ?: return false
+        val q = to.locations.totalProgression ?: return false
+        return q - p in 0.0..0.01
     }
 
     private fun go(link: Link) {
@@ -615,6 +631,8 @@ class EpubReaderActivity : AppCompatActivity() {
         private const val MENU_HIGHLIGHT = 3
         private const val GROUP_HIGHLIGHTS = "highlights"
         private const val GROUP_SEARCH = "search"
+        /** Readium positions (~1024 characters each) one page turn may cover at small font sizes. */
+        private const val MAX_READING_STEP = 3
         private const val HIGHLIGHT_TINT = 0xFFE1A34F.toInt()
         private const val SEARCH_TINT = 0xFF6FA8DC.toInt()
 

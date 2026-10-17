@@ -290,10 +290,16 @@ class PdfReaderActivity : ComponentActivity() {
         }
 
         LaunchedEffect(doc) {
+            // Scrolling on by a page or two is reading; landing further away is a jump.
+            var last: Int? = null
             snapshotFlow { listState.firstVisibleItemIndex }
                 .distinctUntilChanged()
                 .debounce(400)
-                .collect { page -> app.library.updatePosition(bookId, page.toString(), progressOf(page)) }
+                .collect { page ->
+                    val reading = last?.let { page - it in 0..2 } ?: false
+                    app.library.updatePosition(bookId, page.toString(), progressOf(page), reading)
+                    last = page
+                }
         }
 
         val night = settings.pdfNight
