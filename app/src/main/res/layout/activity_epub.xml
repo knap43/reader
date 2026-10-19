@@ -4,6 +4,12 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
+    <!-- An invisible second navigator under the page, laying chapters out to count screen pages. -->
+    <androidx.fragment.app.FragmentContainerView
+        android:id="@+id/page_counter_container"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
     <androidx.fragment.app.FragmentContainerView
         android:id="@+id/navigator_container"
         android:layout_width="match_parent"

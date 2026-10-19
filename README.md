@@ -7,7 +7,7 @@ An EPUB and PDF reader for Android, in Kotlin and Jetpack Compose with Material 
 - **Library.** A shelf with real covers. The book you're reading is pinned under *Continue reading*. Add books with the picker, or open an EPUB or PDF from any file manager with *Open with → Reader*. Long-press a book to mark it as read or remove it. Reading on past 98% marks a book as read on its own (jumping there, say to the notes, doesn't); a checkmark shows on their cover, and the *All / Unread / Read* chips filter the shelf.
 - **EPUB**, rendered with [Readium](https://github.com/readium/kotlin-toolkit):
   - Tap the left or right edge to turn pages; tap the middle to show the controls.
-  - Table of contents, and a progress slider that jumps anywhere in the book. Pages are fixed (about 1,000 characters each), so a page number stays put whatever the font size or screen.
+  - Table of contents, and a progress slider that jumps anywhere in the book. One swipe turns one page: the book's pages are counted at your text settings and screen size, and recounted in the background when those change.
   - Page themes: Dusk, Night, Sepia, Paper.
   - Text size, typeface (original, serif, sans) and line spacing.
   - Optional sliding page turns and hyphenation.

@@ -68,6 +68,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.view.OnApplyWindowInsetsListener
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -79,11 +80,16 @@ import androidx.lifecycle.repeatOnLifecycle
 import dev.knap43.reader.R
 import dev.knap43.reader.data.Book
 import dev.knap43.reader.data.Bookmark
+import dev.knap43.reader.data.ReadingSettings
 import dev.knap43.reader.data.Highlight
 import dev.knap43.reader.data.PageTheme
 import dev.knap43.reader.readerApp
 import dev.knap43.reader.ui.theme.AppTheme
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import org.json.JSONObject
@@ -99,6 +105,7 @@ import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.publication.Publication
 import org.readium.r2.shared.publication.indexOfFirstWithHref
 import org.readium.r2.shared.publication.services.positions
+import org.readium.r2.shared.publication.services.positionsByReadingOrder
 import org.readium.r2.shared.publication.services.search.search
 import org.readium.r2.shared.util.AbsoluteUrl
 
@@ -120,25 +127,85 @@ class EpubReaderActivity : AppCompatActivity() {
     private val returnPoint = MutableStateFlow<Locator?>(null)
 
     /**
-     * Readium's fixed positions (~1024 characters each), used as the book's pages: unlike screen
-     * pages they don't shift with font size or orientation, so a bookmark keeps its number.
-     * Empty until computed, which can take a moment for a long book.
+     * The book's screen pages at the current text settings and screen size, so one turn is one
+     * page. Null while they are being counted, which takes a while the first time for a long book.
      */
-    private val pages = MutableStateFlow<List<Locator>>(emptyList())
+    private val pageMap = MutableStateFlow<PageMap?>(null)
+    private lateinit var pageCounter: PageCounter
+    private var countJob: Job? = null
+    /** The layout [pageMap] was counted for (see [layoutKey]). */
+    private var countedLayout: String? = null
+
+    /** Readium's positions by resource; they place search hits, and steer seeking until pages are counted. */
+    private var positions: List<List<Locator>>? = null
 
     /** The 1-based page a locator falls on, or null while pages are still being counted. */
     private fun pageOf(loc: Locator): Int? {
-        val all = pages.value
-        if (all.isEmpty()) return null
-        loc.locations.position?.let { return it.coerceIn(1, all.size) }
-        // Selections and search hits carry no position; place them by progression instead.
-        val t = loc.locations.totalProgression ?: return null
-        val i = all.indexOfLast { (it.locations.totalProgression ?: 0.0) <= t }
-        return i.coerceAtLeast(0) + 1
+        val map = pageMap.value ?: return null
+        val (index, progression) = publication.placeOf(loc, positions) ?: return null
+        return map.pageOf(index, progression)
     }
 
     /** The page a slider value lands on; matches [goToProgression]. */
     private fun pageAt(progression: Float, total: Int) = (progression * (total - 1)).toInt().coerceIn(0, total - 1) + 1
+
+    /** What page breaks depend on: the text settings and the space the pages fill. */
+    private fun layoutKey(s: ReadingSettings, page: View): String {
+        val w = page.width - page.paddingLeft - page.paddingRight
+        val h = page.height - page.paddingTop - page.paddingBottom
+        return "${w}x$h ${s.fontScale} ${s.font} ${s.spacing} ${s.hyphenate}"
+    }
+
+    /** Counts pages anew when the layout changes, or picks up a count saved for it earlier. */
+    private fun recountPages(page: View) {
+        if (page.width == 0 || page.height == 0) return
+        val settings = readerApp.prefs.settings.value
+        val key = layoutKey(settings, page)
+        if (key == countedLayout) return
+        countedLayout = key
+        countJob?.cancel()
+        // A chapter count from the old layout must not "correct" the new one.
+        chapterScreens.value = null
+        pageMap.value = pageCounter.cached(key)
+        if (pageMap.value != null) {
+            pageCounter.release()
+            return
+        }
+        countJob = lifecycleScope.launch {
+            // Let a run of changes (stepping through text sizes, say) settle first.
+            delay(RECOUNT_DELAY_MS)
+            // The hidden navigator is a fragment, so it only counts while the reader is on screen.
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                if (pageMap.value != null) return@repeatOnLifecycle
+                val map = pageCounter.count(settings.toEpubPreferences())
+                pageCounter.release()
+                pageCounter.save(key, map)
+                pageMap.value = map
+            }
+        }
+    }
+
+    /**
+     * Readium's own screen count for the chapter being read is exact, so it corrects the count
+     * where a chapter laid out differently (say, an image that loaded late).
+     */
+    private fun correctPages(loc: Locator, screens: Int) {
+        val map = pageMap.value ?: return
+        val (index, _) = publication.placeOf(loc, positions) ?: return
+        if (screens <= 0 || map.counts[index] == screens) return
+        val fixed = map.withCount(index, screens)
+        pageMap.value = fixed
+        countedLayout?.let { pageCounter.save(it, fixed) }
+    }
+
+    /** The visible chapter's screen count as Readium reports it, with the locator it was reported for. */
+    private val chapterScreens = MutableStateFlow<Pair<Locator, Int>?>(null)
+
+    private val paginationListener = object : EpubNavigatorFragment.PaginationListener {
+        override fun onPageChanged(pageIndex: Int, totalPages: Int, locator: Locator) {
+            chapterScreens.value = locator to totalPages
+        }
+    }
 
     private val navigatorListener = object : EpubNavigatorFragment.Listener {
         override fun shouldFollowInternalLink(link: Link, context: HyperlinkNavigator.LinkContext?): Boolean {
@@ -233,15 +300,16 @@ class EpubReaderActivity : AppCompatActivity() {
 
     private fun parseLocator(json: String) = runCatching { Locator.fromJSON(JSONObject(json)) }.getOrNull()
 
-    /** The bookmark on the page being read, matched by Readium's position index. */
+    /** The bookmark on the screen being read. */
     private fun bookmarkHere(bookmarks: List<Bookmark>, here: Locator?): Bookmark? {
         here ?: return null
-        val pos = here.locations.position
+        val page = pageOf(here)
         return bookmarks.firstOrNull { b ->
             val l = parseLocator(b.position) ?: return@firstOrNull false
-            l.href.isEquivalent(here.href) && when {
-                pos != null && l.locations.position != null -> l.locations.position == pos
-                else -> kotlin.math.abs((l.locations.progression ?: -1.0) - (here.locations.progression ?: -2.0)) < 0.01
+            l.href.removeFragment().isEquivalent(here.href.removeFragment()) && when {
+                page != null -> pageOf(l) == page
+                // Until pages are counted, only the very same screen matches.
+                else -> kotlin.math.abs((l.locations.progression ?: -1.0) - (here.locations.progression ?: -2.0)) < 1e-4
             }
         }
     }
@@ -253,11 +321,11 @@ class EpubReaderActivity : AppCompatActivity() {
         if (existing != null) {
             annotations.removeBookmark(bookId, existing.id)
         } else {
-            val page = pageOf(here)
             annotations.addBookmark(
                 bookId,
                 Bookmark(
-                    label = chapterTitle(here) ?: page?.let { "Page $it" } ?: "Bookmark",
+                    // No page number here: it moves with the text size; the list shows the current one.
+                    label = chapterTitle(here) ?: "Bookmark",
                     progress = (here.locations.totalProgression ?: 0.0).toFloat(),
                     position = here.toJSON().toString(),
                 ),
@@ -330,6 +398,7 @@ class EpubReaderActivity : AppCompatActivity() {
             initialLocator = initialLocator,
             initialPreferences = app.prefs.settings.value.toEpubPreferences(),
             listener = navigatorListener,
+            paginationListener = paginationListener,
             configuration = EpubNavigatorFragment.Configuration {
                 selectionActionModeCallback = selectionCallback
             },
@@ -340,9 +409,11 @@ class EpubReaderActivity : AppCompatActivity() {
         setContentView(R.layout.activity_epub)
 
         val container = findViewById<FragmentContainerView>(R.id.navigator_container)
+        val counterContainer = findViewById<FragmentContainerView>(R.id.page_counter_container)
         // Readium already pads the page for the display cutout (top and bottom), so only the part
         // of the system bars beyond the cutout is added here; counting the cutout twice left a gap.
-        ViewCompat.setOnApplyWindowInsetsListener(container) { v, insets ->
+        // The page counter's container gets the same, so its pages break where the reader's do.
+        val padForBars = OnApplyWindowInsetsListener { v, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             val cutout = insets.getInsets(WindowInsetsCompat.Type.displayCutout())
             v.setPadding(
@@ -353,6 +424,8 @@ class EpubReaderActivity : AppCompatActivity() {
             )
             insets
         }
+        ViewCompat.setOnApplyWindowInsetsListener(container, padForBars)
+        ViewCompat.setOnApplyWindowInsetsListener(counterContainer, padForBars)
 
         if (savedInstanceState == null) {
             supportFragmentManager.beginTransaction()
@@ -410,7 +483,14 @@ class EpubReaderActivity : AppCompatActivity() {
             }
         }
 
-        lifecycleScope.launch { pages.value = publication.positions() }
+        lifecycleScope.launch { positions = publication.positionsByReadingOrder() }
+
+        pageCounter = PageCounter(publication, supportFragmentManager, counterContainer, cacheDir, bookId)
+        container.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ -> v.post { recountPages(v) } }
+        lifecycleScope.launch {
+            @OptIn(FlowPreview::class)
+            chapterScreens.filterNotNull().debounce(CORRECTION_DELAY_MS).collect { (loc, screens) -> correctPages(loc, screens) }
+        }
 
         lifecycleScope.launch {
             app.prefs.settings.collect { s ->
@@ -418,6 +498,7 @@ class EpubReaderActivity : AppCompatActivity() {
                 applyPageTheme(s.theme)
                 window.setSystemBarsHidden(s.hideSystemBars)
                 pageTurner.animated = s.animatePageTurns
+                recountPages(container)
             }
         }
 
@@ -472,7 +553,13 @@ class EpubReaderActivity : AppCompatActivity() {
     private fun goToProgression(progression: Float) {
         returnPoint.value = null
         lifecycleScope.launch {
-            val all = pages.value.ifEmpty { publication.positions().also { pages.value = it } }
+            pageMap.value?.let { map ->
+                val (index, at) = map.locate(pageAt(progression, map.total))
+                navigator.go(publication.locatorAt(index, at))
+                return@launch
+            }
+            // Pages not counted yet: step by Readium's positions instead.
+            val all = publication.positions()
             if (all.isEmpty()) return@launch
             navigator.go(all[pageAt(progression, all.size) - 1])
         }
@@ -488,11 +575,12 @@ class EpubReaderActivity : AppCompatActivity() {
         val loc by locator.collectAsStateWithLifecycle()
         val settings by app.prefs.settings.collectAsStateWithLifecycle()
         val annotations by app.annotations.of(bookId).collectAsStateWithLifecycle()
-        val total = pages.collectAsStateWithLifecycle().value.size
+        val map by pageMap.collectAsStateWithLifecycle()
+        val total = map?.total ?: 0
         var showNav by remember { mutableStateOf(false) }
         var showSearch by remember { mutableStateOf(false) }
         var showSettings by remember { mutableStateOf(false) }
-        val marked = remember(annotations.bookmarks, loc) { bookmarkHere(annotations.bookmarks, loc) != null }
+        val marked = remember(annotations.bookmarks, loc, map) { bookmarkHere(annotations.bookmarks, loc) != null }
         val barColor = MaterialTheme.colorScheme.surfaceContainer
 
         Box(Modifier.fillMaxSize()) {
@@ -564,13 +652,16 @@ class EpubReaderActivity : AppCompatActivity() {
                 modifier = Modifier.align(Alignment.BottomCenter),
             ) {
                 Surface(color = barColor) {
+                    val page = loc?.let(::pageOf)
                     ProgressPanel(
                         chapter = loc?.title,
-                        progress = loc?.locations?.totalProgression?.toFloat() ?: 0f,
+                        // Once pages are counted, the slider moves a page's width with every turn.
+                        progress = if (page != null && total > 1) (page - 1).toFloat() / (total - 1)
+                        else loc?.locations?.totalProgression?.toFloat() ?: 0f,
                         onSeek = ::goToProgression,
                         label = { dragged ->
-                            val page = if (dragged != null) pageAt(dragged, total) else loc?.let(::pageOf)
-                            if (total > 0 && page != null) "Page $page of $total"
+                            val shown = if (dragged != null) pageAt(dragged, total) else page
+                            if (total > 0 && shown != null) "Page $shown of $total"
                             else "${(((dragged ?: loc?.locations?.totalProgression?.toFloat()) ?: 0f) * 100).toInt()}%"
                         },
                     )
@@ -609,7 +700,7 @@ class EpubReaderActivity : AppCompatActivity() {
             SearchSheet(
                 query = searchQuery.value,
                 onQueryChange = { searchQuery.value = it },
-                hits = remember(results, total) {
+                hits = remember(results, map) {
                     results.map {
                         val place = listOfNotNull(chapterTitle(it), pageOf(it)?.let { n -> "p. $n" }).joinToString(" · ")
                         SearchHit(place.ifEmpty { null }, it.text.before.orEmpty(), it.text.highlight.orEmpty(), it.text.after.orEmpty())
@@ -666,6 +757,8 @@ class EpubReaderActivity : AppCompatActivity() {
         private const val GROUP_SEARCH = "search"
         /** Readium positions (~1024 characters each) one page turn may cover at small font sizes. */
         private const val MAX_READING_STEP = 3
+        private const val RECOUNT_DELAY_MS = 600L
+        private const val CORRECTION_DELAY_MS = 800L
         private val LEGACY_PERCENT = Regex("""(^| · )\d+%$""")
         private const val HIGHLIGHT_TINT = 0xFFE1A34F.toInt()
         private const val SEARCH_TINT = 0xFF6FA8DC.toInt()
