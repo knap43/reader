@@ -33,6 +33,9 @@ class BookFolder(
     private val scanLock = Mutex()
     private val resolver get() = context.contentResolver
 
+    /** Folder files found to be copies of a shelved book, by size, so later scans don't hash them again. */
+    private val duplicateFiles = HashMap<String, Long>()
+
     private val _tree = MutableStateFlow(prefs.bookFolder?.let(Uri::parse))
     /** The chosen folder's tree URI, or null before one is chosen. */
     val tree: StateFlow<Uri?> = _tree.asStateFlow()
@@ -108,32 +111,92 @@ class BookFolder(
         // Forget hidden files that have left the folder, so the list doesn't grow forever.
         if (!foundPaths.containsAll(hidden)) prefs.hiddenDocuments = hidden intersect foundPaths
 
-        val shelved = library.books.value.filter { it.isDocument }
-        val known = shelved.mapTo(HashSet()) { it.path } + hidden
-        // Books whose documents are gone; a new file with the same name and size is the same book, moved.
-        val missing = shelved.filterNot { it.path in foundPaths }.toMutableList()
-
         var added = 0
         var failed = 0
         for (doc in found) {
             val path = doc.uri.toString()
-            if (path in known) continue
-            val moved = missing.firstOrNull { it.fileName == doc.name && it.fileSize == doc.size }
-            if (moved != null) {
-                missing.remove(moved)
-                library.relocate(moved.id, path)
-                continue
+            if (path in hidden || library.books.value.any { it.path == path }) continue
+            if (duplicateFiles[path] == doc.size) continue
+            val fingerprint = books.fingerprint(doc.uri)
+            val same = fingerprint?.let { books.findCopy(it, doc.size) }
+                // A book shelved before fingerprints, whose file has since moved within the folder.
+                ?: library.books.value.firstOrNull {
+                    it.isDocument && it.path !in foundPaths && it.fingerprint == null &&
+                        it.fileName == doc.name && it.fileSize == doc.size
+                }
+            when {
+                same == null -> runCatching { books.describeDocument(doc.uri, doc.name, doc.size, doc.format, fingerprint) }
+                    .onSuccess { library.add(it); added++ }
+                    .onFailure { failed++ }
+                // A private copy from before the folder, or a folder book whose file moved: it now reads from here.
+                !same.isDocument || same.path !in foundPaths -> adopt(same, doc, fingerprint)
+                // A second copy of a file already on the shelf.
+                else -> duplicateFiles[path] = doc.size
             }
-            runCatching { books.describeDocument(doc.uri, doc.name, doc.size, doc.format) }
-                .onSuccess { library.add(it); added++ }
-                .onFailure { failed++ }
         }
-        missing.forEach(::forget)
+        val merged = mergeDuplicates(foundPaths)
+        // Books whose files have left the folder.
+        library.books.value.filter { it.isDocument && it.path !in foundPaths }.forEach(::forget)
 
+        if (merged > 0) _messages.tryEmit("Merged ${plural(merged)} that were on the shelf twice")
         when {
             added > 0 && failed > 0 -> _messages.tryEmit("Added ${plural(added)}; ${plural(failed)} couldn't be read")
             added > 0 -> _messages.tryEmit("Added ${plural(added)}")
             failed > 0 -> _messages.tryEmit("${plural(failed).replaceFirstChar { it.uppercase() }} couldn't be read")
+        }
+    }
+
+    /** Points [book] at [doc], keeping its reading state; a private copy it replaces is deleted. */
+    private fun adopt(book: Book, doc: Found, fingerprint: String?) {
+        library.update(book.id) {
+            it.copy(path = doc.uri.toString(), fileName = doc.name, fileSize = doc.size, fingerprint = fingerprint ?: it.fingerprint)
+        }
+        if (!book.isDocument) book.file.delete()
+    }
+
+    /**
+     * Folds books with the same contents into one: the entry with the most reading done survives,
+     * and it reads from the folder when one of them is there. Returns how many entries were folded away.
+     */
+    private suspend fun mergeDuplicates(present: Set<String>): Int {
+        val shelf = library.books.value.filter { !it.isDocument || it.path in present }
+        var merged = 0
+        // Only books of the same size can match, so only those are hashed.
+        for (sameSize in shelf.groupBy { books.sizeOf(it) }.values) {
+            if (sameSize.size < 2) continue
+            for ((fingerprint, same) in sameSize.groupBy { books.fingerprintOf(it) }) {
+                if (fingerprint == null || same.size < 2) continue
+                merge(same)
+                merged += same.size - 1
+            }
+        }
+        return merged
+    }
+
+    private fun merge(same: List<Book>) {
+        val keep = same.maxWith(
+            compareBy<Book>(
+                { annotations.of(it.id).value.let { a -> a.bookmarks.size + a.highlights.size } },
+                { it.lastOpenedAt },
+                { it.progress },
+            )
+        )
+        val source = same.firstOrNull { it.isDocument } ?: keep
+        library.update(keep.id) {
+            it.copy(
+                path = source.path,
+                fileName = source.fileName ?: it.fileName,
+                fileSize = source.fileSize,
+                finished = same.any { b -> b.finished },
+                addedAt = same.minOf { b -> b.addedAt },
+            )
+        }
+        if (!keep.isDocument && source !== keep) keep.file.delete()
+        for (other in same) {
+            if (other === keep) continue
+            if (prefs.resumeBookId == other.id) prefs.resumeBookId = keep.id
+            // Removing a folder entry leaves its file alone; removing a private copy deletes it.
+            forget(other)
         }
     }
 

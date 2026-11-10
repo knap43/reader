@@ -20,6 +20,7 @@ import org.readium.r2.streamer.PublicationOpener
 import org.readium.r2.streamer.parser.DefaultPublicationParser
 import java.io.File
 import java.io.IOException
+import java.security.MessageDigest
 import java.util.UUID
 
 /**
@@ -68,7 +69,46 @@ class Books(private val context: Context, private val library: Library) {
         }.getOrDefault(false)
     }
 
-    /** Copies a file opened from elsewhere into private storage and adds it to the library. */
+    /** SHA-256 of a file's contents, or null if it can't be read. */
+    suspend fun fingerprint(uri: Uri): String? = withContext(Dispatchers.IO) {
+        runCatching {
+            val digest = MessageDigest.getInstance("SHA-256")
+            context.contentResolver.openInputStream(uri)!!.use { input ->
+                val buf = ByteArray(1 shl 16)
+                while (true) {
+                    val n = input.read(buf)
+                    if (n < 0) break
+                    digest.update(buf, 0, n)
+                }
+            }
+            digest.digest().joinToString("") { "%02x".format(it) }
+        }.getOrNull()
+    }
+
+    /** The book's fingerprint, worked out and saved the first time it's needed. */
+    suspend fun fingerprintOf(book: Book): String? {
+        book.fingerprint?.let { return it }
+        if (!exists(book)) return null
+        val fp = fingerprint(book.uri) ?: return null
+        library.update(book.id) { it.copy(fingerprint = fp) }
+        return fp
+    }
+
+    /** A book already on the shelf with these contents; only books of the same size are hashed. */
+    suspend fun findCopy(fingerprint: String, size: Long, except: String? = null): Book? =
+        library.books.value.firstOrNull { book ->
+            book.id != except && (book.fingerprint?.let { it == fingerprint }
+                ?: (sizeOf(book) == size && fingerprintOf(book) == fingerprint))
+        }
+
+    suspend fun sizeOf(book: Book): Long = withContext(Dispatchers.IO) {
+        if (book.isDocument) book.fileSize else book.file.length()
+    }
+
+    /**
+     * Copies a file opened from elsewhere into private storage and adds it to the library.
+     * A book that's already on the shelf is returned as it is instead.
+     */
     suspend fun import(uri: Uri): Book = withContext(Dispatchers.IO) {
         val resolver = context.contentResolver
         val name = displayName(resolver, uri) ?: uri.lastPathSegment ?: "Untitled"
@@ -78,8 +118,15 @@ class Books(private val context: Context, private val library: Library) {
         (resolver.openInputStream(uri) ?: throw IOException("Couldn't open the file")).use { input ->
             file.outputStream().use { input.copyTo(it) }
         }
+        val fingerprint = fingerprint(Uri.fromFile(file))
+        if (fingerprint != null) {
+            findCopy(fingerprint, file.length())?.let { existing ->
+                file.delete()
+                return@withContext existing
+            }
+        }
         val book = try {
-            describe(id, format, Uri.fromFile(file), file.absolutePath, name, file.length())
+            describe(id, format, Uri.fromFile(file), file.absolutePath, name, file.length()).copy(fingerprint = fingerprint)
         } catch (e: Exception) {
             file.delete()
             throw e
@@ -89,8 +136,8 @@ class Books(private val context: Context, private val library: Library) {
     }
 
     /** Builds a library entry for a document found in the book folder, which stays where it is. */
-    suspend fun describeDocument(uri: Uri, name: String, size: Long, format: Format): Book =
-        describe(UUID.randomUUID().toString(), format, uri, uri.toString(), name, size)
+    suspend fun describeDocument(uri: Uri, name: String, size: Long, format: Format, fingerprint: String?): Book =
+        describe(UUID.randomUUID().toString(), format, uri, uri.toString(), name, size).copy(fingerprint = fingerprint)
 
     private suspend fun describe(id: String, format: Format, uri: Uri, path: String, name: String, size: Long): Book =
         withContext(Dispatchers.IO) {

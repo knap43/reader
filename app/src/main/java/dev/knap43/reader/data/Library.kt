@@ -36,6 +36,8 @@ data class Book(
     /** The file's name and size when added, to recognise it again after it moves within the folder. */
     val fileName: String? = null,
     val fileSize: Long = -1L,
+    /** SHA-256 of the file's contents, which tells the same book apart wherever its file lives. */
+    val fingerprint: String? = null,
 ) {
     /** Read in place from the book folder, rather than copied into private storage. */
     val isDocument get() = path.startsWith("content:")
@@ -56,6 +58,7 @@ data class Book(
         .put("finished", finished)
         .put("fileName", fileName)
         .put("fileSize", fileSize)
+        .put("fingerprint", fingerprint)
 
     companion object {
         /** Reading progress at which a book is marked as read on its own. */
@@ -76,6 +79,7 @@ data class Book(
             finished = if (o.has("finished")) o.optBoolean("finished") else o.optDouble("progress", 0.0) >= FINISHED_AT,
             fileName = o.optStringOrNull("fileName"),
             fileSize = o.optLong("fileSize", -1L),
+            fingerprint = o.optStringOrNull("fingerprint"),
         )
 
         private fun JSONObject.optStringOrNull(key: String): String? =
@@ -105,9 +109,8 @@ class Library(private val store: File) {
         }
     }
 
-    /** Points a folder book at its document's new URI, after the file moved within the folder. */
-    fun relocate(id: String, path: String) = mutate { list ->
-        list.map { if (it.id == id) it.copy(path = path) else it }
+    fun update(id: String, change: (Book) -> Book) = mutate { list ->
+        list.map { if (it.id == id) change(it) else it }
     }
 
     fun markOpened(id: String) = mutate { list ->
