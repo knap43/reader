@@ -4,7 +4,7 @@ An EPUB and PDF reader for Android, in Kotlin and Jetpack Compose with Material 
 
 ## What it does
 
-- **Library.** A shelf with real covers. The book you're reading is pinned under *Continue reading*. Add books with the picker, or open an EPUB or PDF from any file manager with *Open with → Reader*. Long-press a book to mark it as read or remove it. Reading on past 98% marks a book as read on its own (jumping there, say to the notes, doesn't); a checkmark shows on their cover, and the *All / Unread / Read* chips filter the shelf.
+- **Library.** A shelf with real covers. The book you're reading is pinned under *Continue reading*. Choose the folder where you keep your books, and every EPUB and PDF in it and its subfolders joins the shelf, read in place. The folder is rescanned whenever the library comes into view, or when you pull down on it: new files appear, deleted ones leave, and a file moved within the folder keeps its place and progress. You can still open a single EPUB or PDF from any file manager with *Open with → Reader*. Long-press a book to mark it as read or remove it; removing a folder book hides it from the shelf and leaves the file alone. Reading on past 98% marks a book as read on its own (jumping there, say to the notes, doesn't); a checkmark shows on their cover, and the *All / Unread / Read* chips filter the shelf.
 - **EPUB**, rendered with [Readium](https://github.com/readium/kotlin-toolkit):
   - Tap the left or right edge to turn pages; tap the middle to show the controls.
   - Table of contents, and a progress slider that jumps anywhere in the book. One swipe turns one page: the book's pages are counted at your text settings and screen size, and recounted in the background when those change.
@@ -23,7 +23,7 @@ An EPUB and PDF reader for Android, in Kotlin and Jetpack Compose with Material 
 - Optional full screen: hide the status and navigation bars (in the EPUB settings sheet, or the full-screen button in the PDF reader). Swipe from an edge to see them.
 - Your position is saved as you read and restored when you reopen a book.
 
-Books are copied into the app's private storage when added, so the originals can move or disappear without breaking the library.
+Books in the folder are never copied, changed or deleted. Books opened with *Open with* are copied into the app's private storage, so the originals can move or disappear without breaking the library.
 
 ## Dictionary
 

@@ -82,6 +82,16 @@ class ReaderPrefs(context: Context) {
         get() = sp.getString("resumeBook", null)
         set(value) = sp.edit().putString("resumeBook", value).apply()
 
+    /** The tree URI of the folder the library is scanned from. */
+    var bookFolder: String?
+        get() = sp.getString("bookFolder", null)
+        set(value) = sp.edit().putString("bookFolder", value).apply()
+
+    /** URIs of folder documents removed from the shelf, so later scans skip them. */
+    var hiddenDocuments: Set<String>
+        get() = sp.getStringSet("hiddenDocuments", null)?.toSet() ?: emptySet()
+        set(value) = sp.edit().putStringSet("hiddenDocuments", value).apply()
+
     fun pdfOrientation(bookId: String): PdfOrientation =
         enumOr(sp.getString("pdfOrientation:$bookId", null), PdfOrientation.AUTO)
 

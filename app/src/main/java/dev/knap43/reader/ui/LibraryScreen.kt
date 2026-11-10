@@ -22,6 +22,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -30,12 +32,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.MenuBook
-import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AutoStories
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.RemoveDone
 import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -55,6 +57,7 @@ import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
@@ -104,12 +107,14 @@ private enum class ShelfFilter(val label: String) { ALL("All"), UNREAD("Unread")
 fun LibraryScreen(
     busy: StateFlow<String?>,
     messages: SharedFlow<String>,
-    onImport: (List<Uri>) -> Unit,
+    onChooseFolder: (Uri) -> Unit,
     onOpen: (Book) -> Unit,
 ) {
     val app = LocalContext.current.readerApp
     val books by app.library.books.collectAsStateWithLifecycle()
     val busyText by busy.collectAsStateWithLifecycle()
+    val folder by app.folder.tree.collectAsStateWithLifecycle()
+    val scanning by app.folder.scanning.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     var actionsFor by remember { mutableStateOf<Book?>(null) }
     var appearanceOpen by remember { mutableStateOf(false) }
@@ -118,10 +123,10 @@ fun LibraryScreen(
 
     LaunchedEffect(Unit) { messages.collect { snackbar.showSnackbar(it) } }
 
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-        onImport(uris)
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { tree ->
+        tree?.let(onChooseFolder)
     }
-    val pick = { picker.launch(arrayOf("application/epub+zip", "application/pdf")) }
+    val pick = { picker.launch(folder) }
 
     val sorted = remember(books) {
         // Finished books sink to the end of the shelf.
@@ -144,6 +149,9 @@ fun LibraryScreen(
             LargeTopAppBar(
                 title = { Text("Library", fontFamily = FontFamily.Serif) },
                 actions = {
+                    if (folder != null) {
+                        IconButton(onClick = pick) { Icon(Icons.Rounded.FolderOpen, "Change book folder") }
+                    }
                     IconButton(onClick = { appearanceOpen = true }) { Icon(Icons.Rounded.Palette, "Appearance") }
                 },
                 scrollBehavior = scrollBehavior,
@@ -154,69 +162,75 @@ fun LibraryScreen(
             )
         },
         floatingActionButton = {
-            if (books.isNotEmpty()) {
+            if (folder == null && books.isNotEmpty()) {
                 ExtendedFloatingActionButton(
                     onClick = pick,
-                    icon = { Icon(Icons.Rounded.Add, null) },
-                    text = { Text("Add books") },
+                    icon = { Icon(Icons.Rounded.FolderOpen, null) },
+                    text = { Text("Choose folder") },
                 )
             }
         },
         snackbarHost = { SnackbarHost(snackbar) },
         containerColor = MaterialTheme.colorScheme.background,
     ) { padding ->
-        if (books.isEmpty()) {
-            EmptyLibrary(Modifier.padding(padding), onAdd = pick)
-        } else {
-            LazyVerticalGrid(
-                columns = GridCells.Adaptive(112.dp),
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 112.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalArrangement = Arrangement.spacedBy(20.dp),
-                modifier = Modifier.fillMaxSize().padding(padding),
-            ) {
-                item(span = { GridItemSpan(maxLineSpan) }, key = "filters") {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ShelfFilter.entries.forEach { f ->
-                            FilterChip(
-                                selected = filter == f,
-                                onClick = { filter = f },
-                                label = { Text(f.label) },
-                                leadingIcon = if (filter == f) {
-                                    { Icon(Icons.Rounded.Check, null, Modifier.size(FilterChipDefaults.IconSize)) }
-                                } else null,
-                            )
+        PullToRefreshBox(
+            isRefreshing = scanning,
+            onRefresh = app.folder::scan,
+            modifier = Modifier.fillMaxSize().padding(padding),
+        ) {
+            if (books.isEmpty()) {
+                EmptyLibrary(folderName = folder?.let { app.folder.name }, hasFolder = folder != null, scanning = scanning, onChoose = pick)
+            } else {
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(112.dp),
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 112.dp),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(20.dp),
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    item(span = { GridItemSpan(maxLineSpan) }, key = "filters") {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            ShelfFilter.entries.forEach { f ->
+                                FilterChip(
+                                    selected = filter == f,
+                                    onClick = { filter = f },
+                                    label = { Text(f.label) },
+                                    leadingIcon = if (filter == f) {
+                                        { Icon(Icons.Rounded.Check, null, Modifier.size(FilterChipDefaults.IconSize)) }
+                                    } else null,
+                                )
+                            }
                         }
                     }
-                }
-                if (current == null && shelf.isEmpty()) {
-                    item(span = { GridItemSpan(maxLineSpan) }, key = "filter-empty") {
-                        Text(
-                            if (filter == ShelfFilter.READ) "No finished books yet." else "Everything here is read.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth().padding(top = 48.dp),
-                        )
-                    }
-                }
-                if (current != null) {
-                    item(span = { GridItemSpan(maxLineSpan) }, key = "continue") {
-                        ContinueCard(current, onClick = { onOpen(current) }, onLongClick = { actionsFor = current })
-                    }
-                    if (shelf.isNotEmpty()) {
-                        item(span = { GridItemSpan(maxLineSpan) }, key = "shelf-label") {
+                    if (current == null && shelf.isEmpty()) {
+                        item(span = { GridItemSpan(maxLineSpan) }, key = "filter-empty") {
                             Text(
-                                "On the shelf",
-                                style = MaterialTheme.typography.titleSmall,
+                                if (filter == ShelfFilter.READ) "No finished books yet." else "Everything here is read.",
+                                style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(top = 8.dp),
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth().padding(top = 48.dp),
                             )
                         }
                     }
-                }
-                items(shelf, key = { it.id }) { book ->
-                    BookTile(book, onClick = { onOpen(book) }, onLongClick = { actionsFor = book })
+                    if (current != null) {
+                        item(span = { GridItemSpan(maxLineSpan) }, key = "continue") {
+                            ContinueCard(current, onClick = { onOpen(current) }, onLongClick = { actionsFor = current })
+                        }
+                        if (shelf.isNotEmpty()) {
+                            item(span = { GridItemSpan(maxLineSpan) }, key = "shelf-label") {
+                                Text(
+                                    "On the shelf",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(top = 8.dp),
+                                )
+                            }
+                        }
+                    }
+                    items(shelf, key = { it.id }) { book ->
+                        BookTile(book, onClick = { onOpen(book) }, onLongClick = { actionsFor = book })
+                    }
                 }
             }
         }
@@ -262,9 +276,14 @@ fun LibraryScreen(
         AlertDialog(
             onDismissRequest = { confirmRemove = null },
             title = { Text("Remove “${book.title}”?") },
-            text = { Text("The book and your reading position will be deleted from this app.") },
+            text = {
+                Text(
+                    if (book.isDocument) "It leaves the shelf, and your position and highlights are forgotten. The file stays in your folder."
+                    else "The book and your reading position will be deleted from this app."
+                )
+            },
             confirmButton = {
-                TextButton(onClick = { app.library.remove(book.id); app.prefs.forgetBook(book.id); app.annotations.forget(book.id); confirmRemove = null }) {
+                TextButton(onClick = { app.folder.remove(book); confirmRemove = null }) {
                     Text("Remove", color = MaterialTheme.colorScheme.error)
                 }
             },
@@ -443,12 +462,14 @@ private fun GeneratedCover(book: Book) {
 }
 
 @Composable
-private fun EmptyLibrary(modifier: Modifier, onAdd: () -> Unit) {
+private fun EmptyLibrary(folderName: String?, hasFolder: Boolean, scanning: Boolean, onChoose: () -> Unit) {
     Column(
-        modifier.fillMaxSize().padding(32.dp),
+        // Scrollable so that pull-to-refresh works on an empty shelf too.
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
+        Spacer(Modifier.height(96.dp))
         Icon(
             Icons.Rounded.AutoStories,
             null,
@@ -456,19 +477,30 @@ private fun EmptyLibrary(modifier: Modifier, onAdd: () -> Unit) {
             modifier = Modifier.size(72.dp),
         )
         Spacer(Modifier.height(16.dp))
-        Text("Your shelf is empty", style = MaterialTheme.typography.headlineSmall, fontFamily = FontFamily.Serif)
+        Text(
+            if (scanning) "Looking for books…" else "Your shelf is empty",
+            style = MaterialTheme.typography.headlineSmall,
+            fontFamily = FontFamily.Serif,
+        )
         Spacer(Modifier.height(8.dp))
         Text(
-            "Add EPUB or PDF files from your device.",
+            when {
+                !hasFolder -> "Choose the folder where you keep your EPUB and PDF files. Reader shelves them and keeps up as you add more."
+                scanning -> ""
+                folderName != null -> "There are no EPUB or PDF files in “$folderName” yet. Add some, then pull down to refresh."
+                else -> "There are no EPUB or PDF files in your book folder yet. Add some, then pull down to refresh."
+            },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
-        Spacer(Modifier.height(24.dp))
-        FilledTonalButton(onClick = onAdd) {
-            Icon(Icons.Rounded.Add, null)
-            Spacer(Modifier.size(8.dp))
-            Text("Add books")
+        if (!scanning) {
+            Spacer(Modifier.height(24.dp))
+            FilledTonalButton(onClick = onChoose) {
+                Icon(Icons.Rounded.FolderOpen, null)
+                Spacer(Modifier.size(8.dp))
+                Text(if (hasFolder) "Choose another folder" else "Choose folder")
+            }
         }
     }
 }

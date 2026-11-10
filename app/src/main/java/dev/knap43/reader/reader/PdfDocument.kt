@@ -4,14 +4,14 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.RectF
-import android.os.ParcelFileDescriptor
+import android.net.Uri
 import android.util.LruCache
 import io.legere.pdfiumandroid.PdfiumCore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import java.io.File
+import java.io.IOException
 import kotlin.math.abs
 import io.legere.pdfiumandroid.PdfDocument as PdfiumDocument
 
@@ -254,8 +254,8 @@ class PdfDocument private constructor(
             core ?: PdfiumCore(context.applicationContext).also { core = it }
         }
 
-        suspend fun open(context: Context, file: File): PdfDocument = withContext(Dispatchers.IO) {
-            val pfd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+        suspend fun open(context: Context, uri: Uri): PdfDocument = withContext(Dispatchers.IO) {
+            val pfd = context.contentResolver.openFileDescriptor(uri, "r") ?: throw IOException("Couldn't open this PDF")
             val doc = try {
                 core(context).newDocument(pfd)
             } catch (e: Exception) {

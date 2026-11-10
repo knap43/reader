@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.net.Uri
 import android.content.Intent
 import android.graphics.Color as AndroidColor
 import android.os.Bundle
@@ -130,7 +131,6 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 
 /** Text picked on a page by long-pressing and dragging; [anchor] is where the drag began. */
 data class PdfSelection(val page: Int, val anchor: Int, val start: Int, val end: Int) {
@@ -153,11 +153,11 @@ class PdfViewModel(app: Application) : AndroidViewModel(app) {
     val searchMark = MutableStateFlow<PdfRange?>(null)
     private var searchJob: Job? = null
 
-    fun load(file: File, id: String) {
+    fun load(uri: Uri, id: String) {
         if (loadedId == id) return
         loadedId = id
         viewModelScope.launch {
-            runCatching { PdfDocument.open(getApplication<Application>(), file) }
+            runCatching { PdfDocument.open(getApplication<Application>(), uri) }
                 .onSuccess { doc ->
                     document.value = doc
                     outline.value = doc.outline()
@@ -213,7 +213,7 @@ class PdfReaderActivity : ComponentActivity() {
         }
         orientation = readerApp.prefs.pdfOrientation(id)
         requestedOrientation = orientation.activityValue
-        vm.load(book.file, id)
+        vm.load(book.uri, id)
         val startPage = book.position?.toIntOrNull() ?: 0
 
         setContent {

@@ -39,18 +39,25 @@ class MainActivity : ComponentActivity() {
                     LibraryScreen(
                         busy = busy,
                         messages = messages,
-                        onImport = { uris -> importAndMaybeOpen(uris) },
+                        onChooseFolder = readerApp.folder::choose,
                         onOpen = ::openBook,
                     )
                 }
             }
         }
+        lifecycleScope.launch { readerApp.folder.messages.collect { messages.tryEmit(it) } }
         if (savedInstanceState == null && intent?.action == Intent.ACTION_VIEW) {
             handleViewIntent(intent)
         } else {
             // A cold start or a restore after process death: return to the book that was open.
             readerApp.prefs.resumeBookId?.let { readerApp.library.get(it) }?.let(::openBook)
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // Pick up books added to or removed from the folder while the library was out of sight.
+        readerApp.folder.scan()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -82,19 +89,20 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun openBook(book: Book) {
+    private fun openBook(book: Book) = lifecycleScope.launch {
         val app = readerApp
-        if (!book.file.exists()) {
+        if (!app.books.exists(book)) {
             messages.tryEmit("That book's file is missing")
-            return
+            app.folder.scan()
+            return@launch
         }
         app.library.markOpened(book.id)
         app.prefs.resumeBookId = book.id
         when (book.format) {
-            Format.PDF -> startActivity(PdfReaderActivity.intent(this, book.id))
-            Format.EPUB -> lifecycleScope.launch {
+            Format.PDF -> startActivity(PdfReaderActivity.intent(this@MainActivity, book.id))
+            Format.EPUB -> {
                 busy.value = "Opening…"
-                val result = runCatching { app.books.openEpub(book.file) }
+                val result = runCatching { app.books.openEpub(book.uri) }
                 busy.value = null
                 result
                     .onSuccess { pub ->

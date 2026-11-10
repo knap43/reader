@@ -12,6 +12,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
+import android.net.Uri
 import java.io.File
 
 enum class Format { EPUB, PDF }
@@ -21,6 +22,7 @@ data class Book(
     val title: String,
     val author: String?,
     val format: Format,
+    /** A file in private storage, or the `content://` URI of a document in the book folder. */
     val path: String,
     val coverPath: String?,
     /** 0f..1f */
@@ -31,8 +33,14 @@ data class Book(
     val lastOpenedAt: Long = 0L,
     /** Marked as read, by hand or by reading on past [FINISHED_AT]. */
     val finished: Boolean = false,
+    /** The file's name and size when added, to recognise it again after it moves within the folder. */
+    val fileName: String? = null,
+    val fileSize: Long = -1L,
 ) {
+    /** Read in place from the book folder, rather than copied into private storage. */
+    val isDocument get() = path.startsWith("content:")
     val file get() = File(path)
+    val uri: Uri get() = if (isDocument) Uri.parse(path) else Uri.fromFile(file)
 
     fun toJson(): JSONObject = JSONObject()
         .put("id", id)
@@ -46,6 +54,8 @@ data class Book(
         .put("addedAt", addedAt)
         .put("lastOpenedAt", lastOpenedAt)
         .put("finished", finished)
+        .put("fileName", fileName)
+        .put("fileSize", fileSize)
 
     companion object {
         /** Reading progress at which a book is marked as read on its own. */
@@ -64,6 +74,8 @@ data class Book(
             lastOpenedAt = o.optLong("lastOpenedAt"),
             // Books saved before this flag existed count as read once they're nearly done.
             finished = if (o.has("finished")) o.optBoolean("finished") else o.optDouble("progress", 0.0) >= FINISHED_AT,
+            fileName = o.optStringOrNull("fileName"),
+            fileSize = o.optLong("fileSize", -1L),
         )
 
         private fun JSONObject.optStringOrNull(key: String): String? =
@@ -87,9 +99,15 @@ class Library(private val store: File) {
         val book = get(id) ?: return
         mutate { list -> list.filterNot { it.id == id } }
         scope.launch {
-            book.file.delete()
+            // Documents in the book folder are the reader's own files; only private copies are deleted.
+            if (!book.isDocument) book.file.delete()
             book.coverPath?.let { File(it).delete() }
         }
+    }
+
+    /** Points a folder book at its document's new URI, after the file moved within the folder. */
+    fun relocate(id: String, path: String) = mutate { list ->
+        list.map { if (it.id == id) it.copy(path = path) else it }
     }
 
     fun markOpened(id: String) = mutate { list ->
@@ -121,7 +139,9 @@ class Library(private val store: File) {
     private fun read(): List<Book> = runCatching {
         if (!store.exists()) return emptyList()
         val arr = JSONArray(store.readText())
-        List(arr.length()) { Book.fromJson(arr.getJSONObject(it)) }.filter { it.file.exists() }
+        List(arr.length()) { Book.fromJson(arr.getJSONObject(it)) }
+            // Folder books are checked against the folder by the next scan.
+            .filter { it.isDocument || it.file.exists() }
     }.getOrDefault(emptyList())
 
     private fun write(books: List<Book>) {
